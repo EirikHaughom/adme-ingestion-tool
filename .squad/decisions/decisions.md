@@ -43,3 +43,18 @@
 **By:** Charlie (Tester)
 **What:** Issue #2 blocked on automated coverage for auth-mode-specific required fields, per-service health matrices for core M25 OSDU services (storage, search, schema, legal, entitlements, workflow, file, dataset, indexer, notification, eds), explicit partial-failure handling without secret leakage, and product signoff before any extra required inputs beyond contract.
 **Why:** Happy-path-only demo not reviewable for operator tool. Critical review gates: auth switching, unauthorized services, timeouts, mixed health states. Must have test evidence for all dangerous paths before sign-off.
+
+### 2026-04-24T14:38:18.059+02:00: Health probe status semantics (issue #2)
+**By:** Kevin (Backend Dev)
+**What:** Health probe results use explicit `healthy` / `unhealthy` / `error` semantics. `healthy` = probe reached service + 2xx response. `unhealthy` = probe reached service + non-2xx response (includes HTTP code and best-effort error detail). `error` = probe failed before response (timeout, DNS, TLS, connection failure; status_code=None). Probes do **not** follow redirects (redirects hide auth/gateway misconfig). `check_all()` returns results in OSDU_SERVICES order for deterministic UI/test rendering.
+**Why:** Judson needs stable semantics for settings page rendering; Charlie needs same semantics for test assertions. Backend must surface gateway and auth failures distinctly, not smooth them over. Deterministic ordering allows matrix UI and tests to expect fixed service positions.
+
+### 2026-04-24T14:38:18.059+02:00: Indexer probe uses readiness endpoint (issue #2)
+**By:** Kevin (Backend Dev)
+**What:** Indexer health probe changed from `GET /api/indexer/v2/reindex` (rejected by Charlie — mutating endpoint) to `GET /api/indexer/v2/readiness_check` (read-only, valid health check). Keep Indexer in service matrix; preserve health semantics in `app/services/health.py`. Updated tests to assert readiness endpoint.
+**Why:** Charlie flagged reindex as non-idempotent health check. Readiness endpoint provides safe, non-mutating connectivity validation. Tests locked to readiness prevent accidental reversion to mutating path.
+
+### 2026-04-24T14:38:18.059+02:00: EDS probe uses readiness endpoint (issue #2)
+**By:** Kevin (Backend Dev)
+**What:** EDS health probe set to `GET /api/eds/v1/health/readiness_check` (dedicated health endpoint). Do **not** use `POST /api/eds/v1/retrievalInstructions` for health checks — that endpoint requires business payload semantics and produces false negatives unrelated to service health. Keep EDS in issue #2 service matrix; return explicit health status per service.
+**Why:** Charlie flagged EDS coverage in review gate. Search is the only POST probe (by design). EDS has dedicated health endpoints; using business APIs for health validation masks true service state and can block operator workflows on false negatives.

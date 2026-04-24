@@ -23,3 +23,10 @@
 - Identified review risks: auth switching, unauthorized services, timeouts, partial failures
 - Created orchestration logs for Satya and Charlie (issue #2)
 - Documented review gate blocking criteria (auth coverage, M25 health matrices, error handling, product sign-off)
+
+## 2026-04-24 Kevin Issue #2 Revision Batch
+- Processed 6 inbox items (3 Kevin contract corrections, 3 others)
+- Merged Kevin decisions: Indexer probe fix, EDS probe finalization, health status semantics
+- Created Kevin orchestration log (issue #2 revision batch)
+- Created session log for contract-fix batch
+- Updated kevin/history.md with probe contract details
