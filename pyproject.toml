@@ -1,0 +1,38 @@
+[project]
+name = "adme-ingestion-tool"
+version = "0.1.0"
+description = "Operator control plane for Azure Data Manager for Energy (ADME)"
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = [
+    "streamlit>=1.56.0",
+    "azure-identity>=1.19.0",
+    "requests>=2.32.0",
+    "python-dotenv>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-cov>=6.1.0",
+    "ruff>=0.15.0",
+    "mypy>=1.15.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"

@@ -1,0 +1,53 @@
+{
+  "agents": {
+    "satya": {
+      "persistent_name": "Satya",
+      "universe": "Microsoft Executives",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "judson": {
+      "persistent_name": "Judson",
+      "universe": "Microsoft Executives",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "kevin": {
+      "persistent_name": "Kevin",
+      "universe": "Microsoft Executives",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "scott": {
+      "persistent_name": "Scott",
+      "universe": "Microsoft Executives",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "charlie": {
+      "persistent_name": "Charlie",
+      "universe": "Microsoft Executives",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "scribe": {
+      "persistent_name": "Scribe",
+      "universe": "Exempt",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "ralph": {
+      "persistent_name": "Ralph",
+      "universe": "Exempt",
+      "created_at": "2026-04-24T14:11:37.779+02:00",
+      "legacy_named": false,
+      "status": "active"
+    }
+  }
+}
