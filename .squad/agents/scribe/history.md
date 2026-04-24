@@ -9,3 +9,9 @@
 
 - Scribe owns decisions.md, decisions/inbox, orchestration logs, and session logs for the ADME Streamlit squad.
 - Initial roster: Satya, Judson, Kevin, Scott, Charlie, Ralph, and Scribe.
+
+## 2026-04-24 First Session
+- Scribe role established for decision documentation and team communication
+- Processed 3 inbox items from agent Satya (issue #1 scaffolding)
+- Created decisions.md as central decision registry
+- Created orchestration and session logs
