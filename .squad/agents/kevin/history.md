@@ -25,3 +25,14 @@
 - All tests updated and re-run against corrected contracts
 - Issue #2 updated with real current status
 - Ready for Judson's UI integration
+
+## 2026-04-24 Issue #2 Implementation Complete
+- Implemented app/services/auth.py: get_token(connection) function with DeviceCodeCredential (user impersonation) and ClientSecretCredential (service principal) flows
+- Implemented app/services/health.py: check_all(connection, token) with concurrent ThreadPoolExecutor probes, 5s timeout per service, explicit healthy/unhealthy/error semantics
+- Probes consume OSDU_SERVICES canonical list, return results in deterministic order (enables matrix UI and test assertions)
+- Includes corrected Indexer probe (GET /api/indexer/v2/readiness_check) and EDS probe (GET /api/eds/v1/health/readiness_check)
+- No redirect following (prevents hiding auth/gateway misconfig)
+- Error handling preserves meaningful messages without leaking secrets
+- Backend tests validate auth flows, health probes, timeouts, partial failures, deterministic ordering
+- Tests locked to readiness endpoints prevent reversion to mutating paths
+- All backend tests passing, integrated with Judson's UI pages

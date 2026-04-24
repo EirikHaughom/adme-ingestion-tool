@@ -58,3 +58,8 @@
 **By:** Kevin (Backend Dev)
 **What:** EDS health probe set to `GET /api/eds/v1/health/readiness_check` (dedicated health endpoint). Do **not** use `POST /api/eds/v1/retrievalInstructions` for health checks — that endpoint requires business payload semantics and produces false negatives unrelated to service health. Keep EDS in issue #2 service matrix; return explicit health status per service.
 **Why:** Charlie flagged EDS coverage in review gate. Search is the only POST probe (by design). EDS has dedicated health endpoints; using business APIs for health validation masks true service state and can block operator workflows on false negatives.
+
+### 2026-04-24T14:38:18.059+02:00: Issue #2 final approval
+**By:** Charlie (Tester)
+**What:** Approve issue #2 after Kevin's revision. The Indexer probe contract now uses `GET /api/indexer/v2/readiness_check`, and the model plus health tests explicitly protect that fix from regressing back to `/reindex`. All review gates satisfied: contract inputs match implemented settings form, `client_secret` masked and session-scoped, UI renders service-by-service matrix, backend failures explicit, EDS and Indexer coverage present with passing validation.
+**Why:** Re-review confirms Judson's welcome/settings pages, Kevin's auth/health services, and Charlie's test suite meet all acceptance criteria. Remaining non-blocking risk: live ADME/Entra validation before production use (operator responsibility).
