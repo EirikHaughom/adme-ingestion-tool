@@ -68,3 +68,33 @@
 **By:** Judson (Streamlit App Dev)
 **What:** Fixed Streamlit multipage import-path failure by prepending repository root to `sys.path` at the top of `app/main.py` and `app/pages/1_⚙️_Settings.py`, before any local imports run. Kept existing `app/` package layout and absolute `app.*` imports. Added `tests/test_streamlit_import_paths.py` with subprocess-based regression tests that simulate Streamlit-style script loading for both entry point and page scripts.
 **Why:** Streamlit executes multipage files from their script directory, which can omit repository root from Python's import search path. Absolute imports like `from app.models.connection import ADMEConnection` fail. Tiny bootstrap (`import sys; sys.path.insert(0, repo_root)`) is minimal, idempotent, and keeps current app structure intact. Regression tests prevent silent reversion.
+
+### 2026-04-24T19:54:00.751+02:00: User directive — Use interactive login
+**By:** Eirik Haughom (via Copilot)
+**What:** Use interactive login for users instead of device-code sign-in when using user impersonation.
+**Why:** User request — captured for team memory
+
+### 2026-04-24T19:54:00.751+02:00: Interactive browser login design (issue #4)
+**By:** Satya (Lead)
+**What:** Replace `DeviceCodeCredential` with `InteractiveBrowserCredential` from `azure-identity` for `AuthMethod.USER_IMPERSONATION`. This is a direct 1:1 swap: same OAuth 2.0 authorization code grant, but opens system browser with standard Entra ID login page instead of device-code copy-paste flow. Affected files: `app/services/auth.py` (import, constructor, remove callback), `app/pages/1_⚙️_Settings.py` (update help text), `tests/test_auth.py` and `tests/test_auth_service.py` (monkeypatch targets and assertions). No changes to `app/models/connection.py`, `requirements.txt`, or service-principal auth.
+**Why:** `DeviceCodeCredential` forces unnecessary friction for a desktop-launched Streamlit app. `InteractiveBrowserCredential` is the standard interactive flow for locally-run apps — better UX, same security model. No alternative Entra flow needed.
+
+#### Implementation Notes
+- `_build_credential()` calls `InteractiveBrowserCredential(client_id=..., tenant_id=...)` (no `prompt_callback`, no `redirect_uri` — defaults to localhost)
+- Runtime caveats preserved: local-only assumption (fails on headless servers), existing `_close_credential()` pattern, existing `CredentialUnavailableError`/`ClientAuthenticationError`/`AzureError` exception chain, type annotations updated
+- Design approved — ready for implementation
+
+### 2026-04-24T19:54:00.751+02:00: Interactive login acceptance criteria & review gates (issue #4)
+**By:** Charlie (Tester)
+**What:** Defined acceptance criteria for interactive browser login change: (1) Auth behavior (credential instantiation, token acquisition, no callback, service principal unchanged, error handling without device-code language), (2) UI help text (browser sign-in guidance, remove device-code references, test connection flow, main page messaging), (3) Test coverage (unit tests for credential type and error messages, integration tests for browser workflow and cancellation, UI regression tests), (4) Reviewer gates (credential replacement, error handling/messages, UI/UX alignment, test coverage, headless fallback documentation).
+**Why:** Happy-path-only change not reviewable without comprehensive gates. Must prove device code is gone, interactive credential active, service principal unchanged, UI text clean, retry guidance present, regression covered. Headless/non-interactive behavior must be explicit.
+
+### 2026-04-24T19:54:00.751+02:00: Backend error handling for interactive login (issue #4)
+**By:** Kevin (Backend Dev)
+**What:** For `AuthMethod.USER_IMPERSONATION`, backend treats browser-based sign-in errors as interactive-login failures and tells operators to run **Test Connection** again if browser flow was blocked, closed, or unavailable. Keeps Satya's change surgical (direct `InteractiveBrowserCredential` swap). Headless/browser-blocked runs still fail gracefully through `CredentialUnavailableError`, but message explains browser expectation instead of device codes.
+**Why:** Satisfies Charlie's gates by removing device-code language from backend failures while preserving service-principal behavior and error wording. Allows Judson to align UI copy to "browser sign-in" / "run Test Connection again" without backend conflicts.
+
+### 2026-04-24T19:54:00.751+02:00: Interactive login UI decision (issue #4)
+**By:** Judson (Streamlit App Dev)
+**What:** Settings page now tells operators that **Test Connection** opens an interactive browser sign-in for user impersonation. After saving user-impersonation connection, follow-up guidance keeps operators on **Test Connection** for browser sign-in to run. Settings page failure states append **Run Test Connection again to retry** for consistent recovery. Backend auth and console/device-code behavior stay with Kevin's `app/services/auth.py` workstream.
+**Why:** Clear, consistent operator guidance for new interactive browser login flow. Removes friction and aligns with modern OAuth expectations.

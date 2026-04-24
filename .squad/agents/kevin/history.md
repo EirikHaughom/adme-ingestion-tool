@@ -36,3 +36,15 @@
 - Backend tests validate auth flows, health probes, timeouts, partial failures, deterministic ordering
 - Tests locked to readiness endpoints prevent reversion to mutating paths
 - All backend tests passing, integrated with Judson's UI pages
+
+## 2026-04-24 Issue #4 Backend Implementation Complete
+- Replaced DeviceCodeCredential with InteractiveBrowserCredential in app/services/auth.py
+- _build_credential() now calls: InteractiveBrowserCredential(client_id=..., tenant_id=...)
+- Removed _device_code_prompt_callback() function (no longer needed)
+- Updated error messages to reference 'interactive login' or 'browser authentication' instead of device codes
+- Updated type annotations: DeviceCodeCredential | ClientSecretCredential → InteractiveBrowserCredential | ClientSecretCredential
+- Service-principal auth unchanged (continues using ClientSecretCredential)
+- Credential cleanup pattern (_close_credential()) preserved
+- Error handling strategy: CredentialUnavailableError, ClientAuthenticationError, AzureError all provide "Run Test Connection again" guidance
+- Updated tests: test_auth.py and test_auth_service.py monkeypatch InteractiveBrowserCredential, removed callback assertions
+- All validation clean: pytest, ruff, mypy passing; no regressions in service-principal tests

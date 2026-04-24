@@ -59,3 +59,18 @@
 - Fix is production-ready and approved
 - Issue #3 updated with final review status: APPROVED
 - Ready to close issue #3
+
+## 2026-04-24 Issue #4 Planning & Test Gates
+- Defined comprehensive acceptance criteria: auth behavior, UI/help text, test coverage, reviewer gates, headless fallback
+- Test gates documented: credential replacement, error handling/messages, UI/UX alignment, test coverage, headless environment fallback
+- Monitoring requirements: No device-code language in code, error messages use browser login wording, UI text clean, retry guidance present
+
+## 2026-04-24 Issue #4 Final Review & Approval
+- Verified DeviceCodeCredential removed (no imports, no references)
+- Verified InteractiveBrowserCredential active (correct import, instantiation, constructor call)
+- Verified service-principal auth unchanged (ClientSecretCredential still used, tests passing)
+- Verified UI text clean (browser guidance present, device-code wording removed)
+- Verified error messages (browser login language, 'Run Test Connection again' guidance)
+- Verified test coverage: 92% auth.py coverage (exceeds 90% gate), all unit/integration tests passing, no regressions
+- Verified headless fallback: CredentialUnavailableError raised, graceful error handling, user guidance
+- Issue #4 APPROVED — production-ready

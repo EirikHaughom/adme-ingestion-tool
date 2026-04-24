@@ -44,3 +44,11 @@
 - Session state for config, future .env/.secrets support
 - Contract file requires Satya sign-off for any changes
 - Ready for parallel Kevin/Judson work; Charlie blocks on test coverage
+
+## 2026-04-24 Issue #4 Interactive Browser Login Design
+- Approved InteractiveBrowserCredential as correct replacement for DeviceCodeCredential
+- Direct 1:1 swap: same OAuth 2.0 authorization code grant, better UX (browser opens automatically vs device-code copy-paste)
+- Identified minimal affected files: app/services/auth.py, app/pages/1_⚙️_Settings.py, tests/test_auth.py, tests/test_auth_service.py
+- No changes needed: app/models/connection.py, requirements.txt, pyproject.toml, service-principal auth
+- Implementation notes documented: _build_credential() pattern, runtime caveats (local-only, credential cleanup, error handling, type annotations)
+- Design approved — ready for implementation

@@ -34,3 +34,16 @@
 - Prevents silent reversion to failing state
 - All validation clean: pytest passing, ruff clean, mypy clean
 - Issue #3 updated with real implementation status
+
+## 2026-04-24 Issue #4 UI Implementation Complete
+- Updated app/pages/1_⚙️_Settings.py help text: 'A browser window will open during connection test for you to sign in.'
+- Removed all device-code references from UI
+- Test connection flow: browser opens automatically, user signs in via standard Entra ID, control returns to app
+- Success messaging: 'All X configured OSDU services responded successfully.'
+- Failure messaging: 'Interactive login was cancelled. Please run Test Connection again.' (browser closed)
+- Error handling: Clear messages for auth denial, network errors, headless environments
+- All failure states end with consistent call-to-action: 'Run Test Connection again to retry.'
+- Service principal flow unchanged
+- Updated tests/test_settings_page.py with browser-workflow tests
+- Added README.md operator note documenting interactive login flow
+- All UI tests passing, no regressions in service-principal tests
