@@ -1,9 +1,10 @@
 ---
-updated_at: 2026-04-24T12:10:39.849Z
-focus_area: Initial setup
-active_issues: []
+updated_at: 2026-04-24T14:38:18.059+02:00
+focus_area: Welcome page, settings page, and ADME connection flow
+active_issues:
+  - 2
 ---
 
 # What We're Focused On
 
-Getting started. Updated by coordinator at session start.
+Building the first operator-facing pages and wiring up ADME connection configuration plus health validation.

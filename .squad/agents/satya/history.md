@@ -20,3 +20,14 @@
 - Decision to always update GitHub issues with real status (user directive)
 - Streamlit architecture decision documented and archived
 - Team ownership split documented: Judson=UI, Kevin=backend, Scott=infra, Charlie=tests
+
+## 2026-04-24 ADME Connection Architecture (Issue #2)
+- Defined shared contract in `app/models/connection.py`: `ADMEConnection`, `ServiceHealthResult`, `OSDU_SERVICES`.
+- `ADMEConnection.is_valid()` enforces that SP auth requires client_secret.
+- `data_partition_id` is a required input (OSDU APIs need the `data-partition-id` header).
+- Auth approach: `DeviceCodeCredential` for user impersonation, `ClientSecretCredential` for SP — both via `azure-identity`.
+- Health checks: No `/health` endpoint on OSDU services. Use cheap read-only API probes with 5 s timeout, run concurrently via `ThreadPoolExecutor`.
+- Page structure: `app/main.py` = welcome, `app/pages/1_⚙️_Settings.py` = settings/connection.
+- Backend services go in `app/services/auth.py` and `app/services/health.py`.
+- Contract file (`app/models/connection.py`) is the shared interface — changes require lead sign-off.
+- Kevin and Judson can work in parallel after the contract is committed.
