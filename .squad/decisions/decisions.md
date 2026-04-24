@@ -63,3 +63,8 @@
 **By:** Charlie (Tester)
 **What:** Approve issue #2 after Kevin's revision. The Indexer probe contract now uses `GET /api/indexer/v2/readiness_check`, and the model plus health tests explicitly protect that fix from regressing back to `/reindex`. All review gates satisfied: contract inputs match implemented settings form, `client_secret` masked and session-scoped, UI renders service-by-service matrix, backend failures explicit, EDS and Indexer coverage present with passing validation.
 **Why:** Re-review confirms Judson's welcome/settings pages, Kevin's auth/health services, and Charlie's test suite meet all acceptance criteria. Remaining non-blocking risk: live ADME/Entra validation before production use (operator responsibility).
+
+### 2026-04-24T15:37:20.929+02:00: Streamlit import-path fix (issue #3)
+**By:** Judson (Streamlit App Dev)
+**What:** Fixed Streamlit multipage import-path failure by prepending repository root to `sys.path` at the top of `app/main.py` and `app/pages/1_⚙️_Settings.py`, before any local imports run. Kept existing `app/` package layout and absolute `app.*` imports. Added `tests/test_streamlit_import_paths.py` with subprocess-based regression tests that simulate Streamlit-style script loading for both entry point and page scripts.
+**Why:** Streamlit executes multipage files from their script directory, which can omit repository root from Python's import search path. Absolute imports like `from app.models.connection import ADMEConnection` fail. Tiny bootstrap (`import sys; sys.path.insert(0, repo_root)`) is minimal, idempotent, and keeps current app structure intact. Regression tests prevent silent reversion.

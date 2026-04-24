@@ -23,3 +23,14 @@
 - UI tests using Streamlit recorder pattern, auth-mode field gating tests, health matrix rendering tests
 - Integrated with Kevin's auth.py:get_token() and health.py:check_all() services
 - All acceptance criteria met, ready for Charlie's final review
+
+## 2026-04-24 Issue #3 Streamlit Import-Path Fix Complete
+- Fixed multipage import-path failure: Streamlit executes page scripts from their directory, omitting repository root from sys.path
+- Solution: Prepend repository root to sys.path at top of app/main.py and app/pages/1_⚙️_Settings.py before local imports
+- Minimal 4-line bootstrap, idempotent (checks before inserting), keeps existing app/ structure intact
+- Absolute app.* imports remain unchanged (no style shift)
+- Added tests/test_streamlit_import_paths.py: subprocess-based regression tests simulating Streamlit-style script loading for both entry point and pages
+- Verified all app.* imports resolve correctly in isolated subprocess environment
+- Prevents silent reversion to failing state
+- All validation clean: pytest passing, ruff clean, mypy clean
+- Issue #3 updated with real implementation status

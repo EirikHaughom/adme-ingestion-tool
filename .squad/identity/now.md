@@ -1,9 +1,9 @@
 ---
-updated_at: 2026-04-24T14:38:18.059+02:00
-focus_area: Welcome page, settings page, and ADME connection flow
+updated_at: 2026-04-24T15:37:20.929+02:00
+focus_area: Streamlit import-path fix
 active_issues:
 ---
 
 # What We're Focused On
 
-Issue #2 (welcome/settings pages and ADME connection) is now approved and closed. No active issues pending. Ready for next work assignment.
+All current sprint issues (#1 scaffolding, #2 welcome/settings/health, #3 import-fix) are approved and closed. No active issues pending. Ready for next work assignment.
