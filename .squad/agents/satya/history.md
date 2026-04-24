@@ -31,3 +31,16 @@
 - Backend services go in `app/services/auth.py` and `app/services/health.py`.
 - Contract file (`app/models/connection.py`) is the shared interface — changes require lead sign-off.
 - Kevin and Judson can work in parallel after the contract is committed.
+
+## 2026-04-24 Issue #2 ADME Connection Design (Issue #2 Complete)
+- Approved welcome and settings page architecture for connection management
+- Committed shared contract in app/models/connection.py (ADMEConnection, ServiceHealthResult)
+- Defined OSDU_SERVICES list for canonical health probes
+- Auth design: azure-identity with DeviceCodeCredential (user) and ClientSecretCredential (SP)
+- Health checks via concurrent OSDU API probes (5s timeout, no dedicated /health)
+- UI: app/main.py (welcome), app/pages/1_⚙️_Settings.py (settings)
+- Ownership split: Kevin=services, Judson=UI, Charlie=tests, Scott=no sprint work
+- data_partition_id is required input (OSDU header requirement)
+- Session state for config, future .env/.secrets support
+- Contract file requires Satya sign-off for any changes
+- Ready for parallel Kevin/Judson work; Charlie blocks on test coverage
