@@ -113,3 +113,23 @@
 - Code quality: Clean diff; minimal changes; high readability
 - Risk assessment: High-risk areas mitigated; low-risk areas unchanged; no regression detected
 - Status: ✓ APPROVED FOR MERGE — production-ready
+
+## 2026-04-25 Issue #7 Planning & Test Gates
+- Defined comprehensive acceptance criteria: (AC1) Interactive auth uses explicit redirect_uri="http://localhost:8400", (AC2) Settings guidance explains new browser tab and return-to-Streamlit flow, (AC3) token acquisition unaffected, (AC4) multi-tenant behavior preserved, (AC5) session storage unaffected
+- Reviewer gates: (R1) redirect URI configuration verification, (R2) Settings guidance audit, (R3) test coverage for redirect behavior, (R4) multi-tenant compatibility validation, (R5) no regressions in service principal flow
+- Expected test updates: New assertions for redirect_uri parameter passing; Settings page guidance text assertions
+- Manual E2E validation: Browser tab behavior, multi-tenant testing, service health results rendering
+
+## 2026-04-25 Issue #7 Final Review & Approval
+- Verified all 5 reviewer gates APPROVED:
+  - R1: Code shows explicit redirect_uri="http://localhost:8400" in app/services/auth.py; constant makes intent clear; ClientSecretCredential unchanged
+  - R2: Settings page guidance updated with "new browser tab will open for sign-in. After you complete sign-in, close that tab and return here"; matches backend behavior; no localhost:8400 in user text
+  - R3: New unit tests verify redirect_uri parameter passed to credential; token acquisition still works; error messages clean; all 26 tests pass
+  - R4: tenant_id correctly passed to credential; redirect URI contains no tenant-specific values; session state isolation preserved
+  - R5: Service principal auth (ClientSecretCredential) unchanged; all service principal tests pass without modification; no new regressions
+- Manual E2E testing: Browser opens new tab for sign-in; Settings spinner displays during auth; service health results render automatically after tab close; multi-tenant testing shows no cross-tenant confusion
+- Test execution: 26 pytest tests passing; ruff clean; mypy clean
+- Code quality: Minimal impact; clear constant names; backward compatible
+- Risk assessment: All risks mitigated; no regressions detected
+- Status: ✓ APPROVED FOR MERGE — production-ready
+

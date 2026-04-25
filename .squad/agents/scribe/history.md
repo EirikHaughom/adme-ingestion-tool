@@ -81,3 +81,19 @@
 - All 6 sprint issues (#1-#6) now complete and approved
 - decisions.md grew from 14.5KB to 18.2KB (under 20KB hard gate)
 - Inbox cleared (0 items); all 6 issues fully consolidated
+
+## 2026-04-25 Issue #7 Full Completion Batch
+- Merged 3 decision items: Satya design (redirect behavior), Charlie planning (acceptance criteria & gates), Kevin implementation (explicit redirect_uri)
+- Root cause: InteractiveBrowserCredential requires SDK's own localhost:8400 listener for OAuth code capture; cannot redirect to Streamlit; users didn't know to switch back
+- Solution: (1) Update Settings guidance to explain new tab opens for sign-in, user should return to Streamlit after closing it; (2) Explicitly pass redirect_uri="http://localhost:8400" to credential for determinism
+- Created orchestration logs for Satya (design), Charlie (planning), Kevin (backend), Judson (UI), Charlie (final review)
+- Created session log for issue #7 full completion batch
+- Updated satya/history.md with auth redirect design approval
+- Updated kevin/history.md with backend implementation, INTERACTIVE_BROWSER_REDIRECT_URI constant, test coverage
+- Updated judson/history.md with Settings guidance text updates
+- Updated charlie/history.md with planning gates and final approval (5/5 reviewer gates APPROVED)
+- Issue #7 fully APPROVED and ready to close
+- All 7 sprint issues (#1-#7) now complete and approved
+- decisions.md grew from 18.2KB to 19.8KB (under 20KB hard gate)
+- Inbox cleared (0 items); all 7 issues fully consolidated
+

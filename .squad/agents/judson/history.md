@@ -47,3 +47,17 @@
 - Updated tests/test_settings_page.py with browser-workflow tests
 - Added README.md operator note documenting interactive login flow
 - All UI tests passing, no regressions in service-principal tests
+
+## 2026-04-25 Issue #7 UI Guidance Update
+- Root cause: Users didn't understand that new browser tab opens for interactive auth; unclear whether/where to return after sign-in
+- Solution: Updated Settings page guidance text in app/pages/1_⚙️_Settings.py to explain multi-tab behavior clearly
+- Changes made:
+  - Updated USER_IMPERSONATION_GUIDANCE: "A new browser tab will open for Azure AD sign-in. After you complete sign-in, close that tab and return here to see the results."
+  - Updated USER_IMPERSONATION_REFRESH_GUIDANCE: Same pattern for token refresh scenario
+  - Explains new tab opens (sets expectation)
+  - Instructs return to Streamlit after closing tab (provides clear next action)
+  - Avoids technical details (localhost:8400 is implementation detail for developers)
+- Why this helps: Users understand entire flow; no confusion about where results appear
+- Test updates: Added UI text assertions in tests/test_settings_page.py verifying guidance contains "new browser tab" and "return here"
+- Status: UI guidance implementation complete, approved for merge
+

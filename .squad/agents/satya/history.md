@@ -69,3 +69,13 @@
 - No UI or model changes needed beyond scope constant
 - Files to change: `app/services/auth.py` (remove AZURE_CLI_PUBLIC_CLIENT_ID, use connection.client_id), `app/models/connection.py` (hardcode scope property), tests (update assertions)
 - Design approved — ready for implementation
+
+## 2026-04-25 Issue #7 Auth Redirect Behavior Design
+- Root cause: InteractiveBrowserCredential starts ephemeral HTTP server on localhost:8400 to capture OAuth code. SDK must receive code on that server; cannot redirect to Streamlit (8501) without breaking token exchange.
+- Key finding: This is fundamental constraint of authorization code flow with local listener. Applies equally to MSAL Python.
+- Two-part fix: (1) Update Settings page guidance to explain new browser tab opens for sign-in; users should return to Streamlit after closing it. (2) Explicitly pass `redirect_uri="http://localhost:8400"` to credential in app/services/auth.py.
+- Why explicit redirect_uri: Makes port deterministic (no SDK-version drift), self-documents intended behavior, ensures alignment with app registration.
+- Out of scope: No custom success pages (not exposed by InteractiveBrowserCredential), no Streamlit redirect (breaks auth), no raw MSAL calls (adds complexity).
+- Expected outcome: User understands full UX flow; opens new tab for sign-in → closes tab → returns to Streamlit → sees results.
+- Design approved — ready for implementation
+

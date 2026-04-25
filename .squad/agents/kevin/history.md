@@ -70,3 +70,16 @@
 - Validation: All tests passing (24/24), ruff clean, mypy strict passing, no regressions
 - Service principal: Unchanged logic, uses same hardcoded scope
 - Status: Implementation complete, approved for merge
+
+## 2026-04-25 Issue #7 Auth Redirect Implementation
+- Root cause: InteractiveBrowserCredential starts ephemeral HTTP server on localhost:8400 to capture OAuth code. SDK must receive code on that server; cannot redirect to Streamlit (8501) without breaking token exchange.
+- Solution: Pass explicit `redirect_uri="http://localhost:8400"` to InteractiveBrowserCredential in app/services/auth.py
+- Why explicit parameter: Makes port deterministic (no SDK-version drift), self-documents intended behavior, ensures alignment with app registration
+- Changes made:
+  - Added INTERACTIVE_BROWSER_REDIRECT_URI constant in app/services/auth.py
+  - Updated _build_credential() USER_IMPERSONATION path to pass explicit redirect_uri parameter
+  - Left ClientSecretCredential (service principal) behavior unchanged
+  - Updated test assertions in test_auth.py and test_auth_service.py to verify redirect_uri parameter
+- Validation: All tests passing (26/26), ruff clean, mypy clean, no regressions in service-principal tests
+- Status: Implementation complete, approved for merge
+
