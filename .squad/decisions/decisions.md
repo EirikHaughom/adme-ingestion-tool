@@ -98,3 +98,18 @@
 **By:** Judson (Streamlit App Dev)
 **What:** Settings page now tells operators that **Test Connection** opens an interactive browser sign-in for user impersonation. After saving user-impersonation connection, follow-up guidance keeps operators on **Test Connection** for browser sign-in to run. Settings page failure states append **Run Test Connection again to retry** for consistent recovery. Backend auth and console/device-code behavior stay with Kevin's `app/services/auth.py` workstream.
 **Why:** Clear, consistent operator guidance for new interactive browser login flow. Removes friction and aligns with modern OAuth expectations.
+
+### 2026-04-25T19:44:06.175+02:00: Interactive auth callback fix design (issue #5)
+**By:** Satya (Lead)
+**What:** Interactive browser auth was failing post-callback with AADSTS7000218 / invalid_client because InteractiveBrowserCredential was using ADME confidential-client app ID instead of a public client. Fixed by using Azure CLI well-known public client ID ( 4b07795-a710-4f9e-9640-a91e60e60e08) for credential instantiation while preserving connection.client_id for ADME scope derivation ({client_id}/.default). No UI or model changes required. Optional future: add interactive_client_id field for custom public-client support.
+**Why:** Browser sign-in succeeds but auth-code exchange fails because confidential clients require client_secret which InteractiveBrowserCredential doesn't send. Azure CLI's public client is trusted by all tenants and is the standard pattern for interactive auth flows accessing ADME. Token's audience remains the ADME resource via scope derivation.
+
+### 2026-04-25T19:44:06.175+02:00: Interactive auth callback acceptance criteria & gates (issue #5)
+**By:** Charlie (Tester)
+**What:** Defined acceptance criteria and reviewer gates for successful end-to-end interactive auth after callback: (1) Browser sign-in completes and token exchange succeeds with no invalid_client error, (2) Settings page reports success with green validation summary, (3) No AADSTS7000218 errors, (4) Unit tests for callback success and error handling, (5) Integration tests for full settings flow, (6) Service principal auth regression coverage, (7) >=90% code coverage for auth module, (8) UX/messaging clarity.
+**Why:** Interactive auth callback integration is complex; must prove browser-to-app exchange succeeds, session state transitions correctly, error handling covers invalid_client, and regression doesn't break service principal.
+
+### 2026-04-25T19:44:06.175+02:00: Interactive auth callback implementation (issue #5)
+**By:** Kevin (Backend Dev)
+**What:** Updated pp/services/auth.py to use Azure CLI public client ID ( 4b07795-a710-4f9e-9640-a91e60e60e08) when creating InteractiveBrowserCredential for user impersonation. Preserved connection.client_id for ADME scope derivation. Preserved ClientSecretCredential for service principal unchanged. Updated 	ests/test_auth.py and 	ests/test_auth_service.py to assert public client ID and preserved ADME scope behavior. Added AADSTS7000218 regression test case. All validation clean: pytest, ruff, mypy passing; no regressions.
+**Why:** Confidential clients reject public-client flows; Azure CLI's public client is trusted and standard pattern for interactive ADME access. No UI/model changes required — pure backend fix.

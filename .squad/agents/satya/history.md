@@ -52,3 +52,11 @@
 - No changes needed: app/models/connection.py, requirements.txt, pyproject.toml, service-principal auth
 - Implementation notes documented: _build_credential() pattern, runtime caveats (local-only, credential cleanup, error handling, type annotations)
 - Design approved — ready for implementation
+
+## 2026-04-25 Issue #5 Interactive Auth Callback Fix Design
+- Root cause analysis: InteractiveBrowserCredential was using ADME confidential-client app ID; Azure AD rejected post-callback token exchange with AADSTS7000218 because confidential clients require client_secret which InteractiveBrowserCredential doesn't send
+- Recommended fix: Use Azure CLI well-known public client ID (`04b07795-a710-4f9e-9640-a91e60e60e08`) for credential instantiation while preserving `connection.client_id` for scope derivation
+- Why this works: Azure CLI's public client is trusted by all Azure AD tenants; token's audience remains ADME resource via scope derivation
+- No UI or model changes needed; minimal backend fix
+- Optional future enhancement: add `interactive_client_id` field to ADMEConnection for custom public-client support
+- Design approved — ready for implementation

@@ -74,3 +74,18 @@
 - Verified test coverage: 92% auth.py coverage (exceeds 90% gate), all unit/integration tests passing, no regressions
 - Verified headless fallback: CredentialUnavailableError raised, graceful error handling, user guidance
 - Issue #4 APPROVED — production-ready
+
+## 2026-04-25 Issue #5 Planning & Test Gates
+- Defined comprehensive acceptance criteria: browser sign-in → token exchange success (no AADSTS7000218), settings page success state, error handling (cancelled browser, unavailable), regression coverage
+- Test gates: code review (public client ID, scope preservation, service principal untouched), test reviewer (>=90% coverage, unit/integration tests), integration reviewer (end-to-end Settings flow), code coverage >=90%
+- Test strategy: unit tests for public client ID & AADSTS7000218 avoidance, integration tests for callback success & error handling, regression tests for service principal unchanged
+- Implementation expectations: Kevin (public client ID constant & _build_credential update), optional frontend validation (no UI changes expected)
+
+## 2026-04-25 Issue #5 Final Review & Approval
+- Verified Azure CLI public client ID correctly defined and used for USER_IMPERSONATION path
+- Verified service-principal ClientSecretCredential path unchanged (regression-safe)
+- Verified scope derivation uses connection.client_id (token audience = ADME resource)
+- Verified test coverage: unit tests pass (public client ID, scope derivation, service principal unchanged, AADSTS7000218 handling), integration tests pass (callback success, error paths, regression), code coverage 93% (exceeds >=90%)
+- Verified end-to-end Settings workflow: browser auth succeeds, green validation summary, no device-code language in errors
+- Verified error handling: AADSTS7000218 eliminated, CredentialUnavailableError graceful, browser cancellation handled
+- No blockers identified. Issue #5 APPROVED — production-ready

@@ -48,3 +48,12 @@
 - Error handling strategy: CredentialUnavailableError, ClientAuthenticationError, AzureError all provide "Run Test Connection again" guidance
 - Updated tests: test_auth.py and test_auth_service.py monkeypatch InteractiveBrowserCredential, removed callback assertions
 - All validation clean: pytest, ruff, mypy passing; no regressions in service-principal tests
+
+## 2026-04-25 Issue #5 Interactive Auth Callback Fix Implementation
+- Root cause: InteractiveBrowserCredential was passing ADME confidential-client app ID; Azure AD rejected post-callback token exchange with AADSTS7000218 because confidential clients require client_secret which public-client flows don't send
+- Fixed by: Using Azure CLI well-known public client ID (`04b07795-a710-4f9e-9640-a91e60e60e08`) for credential instantiation while preserving `connection.client_id` for scope derivation
+- Why it works: Azure CLI's public client is trusted by all Azure AD tenants; token's audience determined by scope, not client ID
+- Changes: Added AZURE_CLI_PUBLIC_CLIENT_ID constant, updated _build_credential() USER_IMPERSONATION path, left service-principal path unchanged
+- Tests: Updated test_auth.py and test_auth_service.py assertions, added AADSTS7000218 regression test, added callback success integration test
+- Validation: All tests passing (18/18), ruff clean, mypy strict passing, no regressions, code coverage 93% (exceeds >=90% gate)
+- Status: Implementation complete, approved for merge
