@@ -1,0 +1,151 @@
+================================================================================
+ISSUE #6 TEST PLANNING SUMMARY
+Charlie (Tester) | 2026-04-25
+================================================================================
+
+ISSUE: Fix tenant-compatible interactive auth and update ADME scope
+- Problem: AADSTS700016 error with hardcoded Azure CLI public client ID
+- Request: Scope must be `https://energy.azure.com/.default`
+- Unknown: Origin of hardcoded app ID `04b07795-a710-4f9e-9640-a91e60e60e08`
+
+================================================================================
+ACCEPTANCE CRITERIA (4 total)
+================================================================================
+
+AC1: Interactive User Auth Succeeds in IPS-Energy Tenant
+  - User configures with IPS-Energy tenant, client ID, user impersonation
+  - Clicks Test Connection → Browser opens, user signs in
+  - No AADSTS700016 error, token acquired, health check proceeds
+
+AC2: Scope Updated to Energy.Azure.Com
+  - connection.scope returns `https://energy.azure.com/.default`
+  - NOT `<client_id>/.default` (the old behavior)
+
+AC3: Service Principal Auth Remains Unaffected
+  - Client secret credential unchanged
+  - Scope also becomes `https://energy.azure.com/.default`
+  - No regression in behavior
+
+AC4: Hardcoded App ID Origin Is Documented
+  - Code or commit message explains where Azure CLI public client ID came from
+  - Rationale documented if retained; clean deletion if removed
+
+================================================================================
+REVIEWER GATES (5 gates before merge)
+================================================================================
+
+Gate 1: No Hardcoded App IDs Without Justification
+  - If AZURE_CLI_PUBLIC_CLIENT_ID removed, verify intentional
+  - If retained, must have clear comment explaining why
+  - Pass: Removed cleanly or documented with rationale
+
+Gate 2: Scope Configuration Is Correct
+  - Scope is `https://energy.azure.com/.default` for both auth methods
+  - Used in both user impersonation and service principal
+  - Tests verify the exact scope value
+  - Pass: Scope correct in code and tests
+
+Gate 3: Config or Input Changes Are Documented
+  - Any new user settings clearly documented
+  - Settings page UI and help text accurate
+  - Eirik confirms user experience is correct
+  - Pass: No surprises, Settings page updated if needed
+
+Gate 4: Tests Cover the New Auth Behavior
+  - Unit tests verify client ID, tenant ID, and scope to credential builder
+  - Service principal tests unchanged
+  - Error handling tests unchanged
+  - Existing tests still pass (no regression)
+  - Pass: All tests pass, new/updated tests cover scope change
+
+Gate 5: Regression Test Coverage
+  - Auth error messages exclude device-code language (browser sign-in only)
+  - Service principal error messages preserved
+  - Health check page displays auth errors correctly
+  - Settings page accepts and persists credentials
+  - No token caching issues from scope change
+  - Pass: All auth, health, and settings tests pass
+
+================================================================================
+REQUIRED TEST UPDATES
+================================================================================
+
+Unit Tests (test_auth.py):
+  - Update scope assertion in test_get_token_uses_public_browser_client_for_user_impersonation
+    OLD: assert calls["scope"] == "client-id/.default"
+    NEW: assert calls["scope"] == "https://energy.azure.com/.default"
+  
+  - Update scope assertion in test_get_token_uses_client_secret_credential
+    OLD: assert calls["scope"] == "client-id/.default"
+    NEW: assert calls["scope"] == "https://energy.azure.com/.default"
+  
+  - No changes needed:
+    - Error handling tests (behavior unchanged)
+    - Service principal behavior tests (logic unchanged)
+
+Integration Tests (test_settings_page.py):
+  - Verify auth method selector renders correctly
+  - Verify form submission with user impersonation works
+  - Verify form submission with service principal works
+  - Verify Test Connection button triggers right flow
+  - (No scope value assertions expected in these tests)
+
+Fixtures (conftest.py):
+  - No changes needed (payloads are representative, not prescriptive)
+
+================================================================================
+DECISION REQUIRED: APP ID ORIGIN
+================================================================================
+
+The implementation team must decide and document:
+
+Question: Where does the hardcoded Azure CLI public client ID come from?
+
+Options:
+  1. REMOVE: Azure CLI public client was tenant-specific, use customer's app
+  2. RETAIN: Public client is still needed for [specific scenario]
+  3. REPLACE: Switch to Microsoft's [well-known multi-tenant app ID]
+
+Documentation Required: Code comment in auth.py or commit message explaining
+the choice and why it solves AADSTS700016 in customer tenants.
+
+Decision Owner: Eirik (Product Owner) / Implementation team
+
+================================================================================
+TEST EXECUTION PLAN
+================================================================================
+
+1. Run baseline tests → Confirm all pass before implementation
+2. Implement the fix → Update ADMEConnection.scope and/or auth module
+3. Update assertions → Scope assertions change to https://energy.azure.com/.default
+4. Run full test suite → Confirm all tests pass (including updated unit tests)
+5. Manual smoke test → Verify interactive auth in real Azure AD tenant (if available)
+6. Update issue #6 → Confirm AC1-AC4 met, link PR to issue, close issue
+
+================================================================================
+RISK ASSESSMENT
+================================================================================
+
+HIGH-RISK AREAS:
+  - Scope value change could break token validation if API expects <client_id>/.default
+    Mitigation: Verify with API team that https://energy.azure.com/.default is accepted
+  
+  - Client ID strategy change (Azure CLI public → customer app?) could confuse users
+    Mitigation: Eirik confirms Settings page guidance is updated
+
+LOW-RISK AREAS:
+  - Service principal auth unchanged (logic untouched)
+  - Error message formatting unchanged except for scope
+  - Health check page (only consumes token, doesn't care about scope)
+
+================================================================================
+DELIVERABLES
+================================================================================
+
+✓ Acceptance Criteria and Reviewer Gates document created
+✓ GitHub issue #6 updated with test plan comment
+✓ Test planning summary document completed
+
+Ready for implementation team to begin work.
+
+================================================================================

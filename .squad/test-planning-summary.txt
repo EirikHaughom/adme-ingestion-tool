@@ -1,0 +1,105 @@
+================================================================================
+TEST PLANNING SUMMARY: Issue #5 - Interactive Auth Callback
+================================================================================
+
+PROBLEM:
+Browser sign-in completes successfully to localhost callback, but Streamlit
+settings page still fails with "AADSTS7000218 / invalid_client" error. Token
+acquisition is not succeeding after the browser callback.
+
+ACCEPTANCE CRITERIA (What Success Looks Like):
+────────────────────────────────────────────────────────────────────────────
+A1. End-to-End Flow Works
+    ✓ User selects "User Impersonation" auth
+    ✓ Browser window opens for Azure AD login
+    ✓ User completes sign-in
+    ✓ Browser callback reaches localhost successfully
+    ✓ Token exchange completes (no invalid_client error)
+    ✓ Settings page shows "All [N] services responded successfully"
+
+A2. Settings Page Reports Success
+    ✓ Health results stored (not error state)
+    ✓ Green validation summary displayed
+    ✓ Overall state transitions to "Healthy" (not "Validation failed")
+    ✓ No error banner appears
+
+A3. Interactive Auth Callback Succeeds
+    ✓ Auth code from browser is properly exchanged for token
+    ✓ No invalid_client error from Azure AD
+    ✓ Returned token is non-empty and valid
+
+REVIEWER GATES (Code Review Checklist):
+────────────────────────────────────────────────────────────────────────────
+R1. Unit Tests - Interactive Auth Success Path
+    □ test_interactive_auth_callback_succeeds
+    □ test_interactive_auth_with_valid_client_credentials
+    □ All existing auth tests still pass
+
+R2. Settings Page Success State Display
+    □ test_settings_page_displays_success_after_interactive_auth_test
+    □ Validates green summary, no error banner
+    □ Health results stored in session state
+
+R3. Integration Test - Full E2E Flow
+    □ test_interactive_auth_e2e_succeeds
+    □ Tests form → auth → health check → UI display
+    □ Validates session state transitions
+
+R4. No Regression in Service Principal Auth
+    □ Existing service principal tests pass
+    □ New regression test confirms SP auth still works
+    □ Code diff shows no unintended SP changes
+
+R5. Error Handling for invalid_client
+    □ Existing: CredentialUnavailableError handled
+    □ Existing: Empty token from callback rejected
+    □ New: invalid_client error caught and shown to user
+    □ Error messages are operator-friendly (no "device code" jargon)
+
+R6. Code Coverage - Auth Module >= 90%
+    □ pytest --cov=app/services/auth
+    □ Interactive auth path fully covered
+    □ Callback error handling fully covered
+    □ No untested branches
+
+R7. UX/UI - Settings Page State & Messaging
+    □ Form state transitions correct (pending → healthy/degraded, not failed)
+    □ User guidance text present for interactive auth
+    □ Validation table displays all service results
+    □ Messages are clear and actionable
+
+R8. UX Reviewer Gate (If Requested)
+    □ If Satya/reviewer requests UI changes: document & re-test
+    □ Run full test suite with new UX
+    □ Validate messaging consistency
+
+TESTING APPROACH:
+────────────────────────────────────────────────────────────────────────────
+• Mock InteractiveBrowserCredential to simulate browser callback + token exchange
+• Mock health check service to return successful results
+• Verify session state transitions (HEALTH_RESULTS_KEY, HEALTH_ERROR_KEY)
+• Verify Streamlit UI renders correct state
+• No real browser/Azure AD needed for unit/integration tests
+• Smoke test can validate real Azure AD path separately
+
+REGRESSION COVERAGE:
+────────────────────────────────────────────────────────────────────────────
+✓ Service principal auth path unchanged
+✓ Session state management unchanged
+✓ Health check flow unchanged
+✓ Settings page form logic unchanged
+✓ Error handling for all auth methods intact
+
+DECISION ARTIFACTS:
+────────────────────────────────────────────────────────────────────────────
+• File: .squad/decisions/inbox/charlie-interactive-auth-callback-gates.md
+  Full test planning document with detailed test specs for each gate
+
+NEXT STEPS:
+────────────────────────────────────────────────────────────────────────────
+1. Implementation team diagnoses invalid_client root cause
+2. Dev writes fix + tests per gates R1-R7
+3. Code review: verify all gates pass before merge
+4. If UI changes requested: apply gate R8 before final merge
+
+================================================================================

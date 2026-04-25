@@ -68,3 +68,16 @@
 - Updated charlie/history.md with planning gates and final approval
 - Issue #5 fully APPROVED and ready to close
 - All 5 sprint issues (#1-#5) now complete and approved
+
+## 2026-04-25 Issue #6 Full Completion Batch
+- Merged 3 decision items: Satya design (tenant-compatible fix), Charlie planning (acceptance criteria & gates), Kevin implementation (backend changes)
+- Root cause: Azure CLI public client ID is blocked in some enterprise tenants (IPS-Energy); solution: use customer's app registration + hardcoded ADME scope
+- Created orchestration logs for Satya (design), Charlie (planning), Kevin (implementation), Charlie (final review)
+- Created session log for issue #6 full completion batch
+- Updated satya/history.md with tenant-compatible auth design
+- Updated kevin/history.md with backend implementation, scope hardcoding, test coverage
+- Updated charlie/history.md with planning gates and final approval
+- Issue #6 fully APPROVED and ready to close
+- All 6 sprint issues (#1-#6) now complete and approved
+- decisions.md grew from 14.5KB to 18.2KB (under 20KB hard gate)
+- Inbox cleared (0 items); all 6 issues fully consolidated

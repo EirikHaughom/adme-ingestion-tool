@@ -89,3 +89,27 @@
 - Verified end-to-end Settings workflow: browser auth succeeds, green validation summary, no device-code language in errors
 - Verified error handling: AADSTS7000218 eliminated, CredentialUnavailableError graceful, browser cancellation handled
 - No blockers identified. Issue #5 APPROVED — production-ready
+
+## 2026-04-25 Issue #6 Planning & Test Gates
+- Defined comprehensive acceptance criteria: (AC1) Interactive auth succeeds in IPS-Energy tenant with customer's app registration (no AADSTS700016), (AC2) scope hardcoded to https://energy.azure.com/.default, (AC3) service principal unchanged, (AC4) hardcoded app ID origin documented
+- Reviewer gates: (G1) no hardcoded app IDs without justification, (G2) scope correctly hardcoded and used, (G3) client ID strategy clear, (G4) tests cover new auth behavior, (G5) regression coverage (no device-code language, service principal preserved, settings unchanged, health check unchanged, error handling unchanged)
+- Expected test updates: scope assertions in 5+ test cases; new tests for client_id verification and hardcoded scope verification
+- Test execution plan: baseline → implement → update assertions → full test suite → manual smoke test → update issue
+- Risk assessment: High-risk areas (scope change, client ID migration) mitigated by testing; low-risk areas (service principal, error messages) unchanged
+
+## 2026-04-25 Issue #6 Final Review & Approval
+- Verified all 4 acceptance criteria met:
+  - AC1: Azure CLI public client ID removed; customer's app registration now used; no tenant-specific AADSTS700016 errors
+  - AC2: Scope hardcoded to https://energy.azure.com/.default (constant); no dynamic {client_id}/.default derivation
+  - AC3: Service principal auth unchanged; ClientSecretCredential logic preserved; only scope updated
+  - AC4: Code comment explains why hardcoded ID was removed; design/planning documents provide full rationale
+- Verified all 5 reviewer gates passed:
+  - G1: AZURE_CLI_PUBLIC_CLIENT_ID removed cleanly; no new hardcoded fallback IDs
+  - G2: Scope hardcoded in connection.py; verified in both interactive and service-principal paths; test assertions updated
+  - G3: Customer's client_id used for interactive auth; no fallback to Microsoft's public app; test coverage present
+  - G4: Unit tests updated (scope assertions, client_id verification); regression tests passing; 24/24 tests pass
+  - G5: Device-code language removed; service principal unchanged; health check unchanged; settings page unchanged; no regressions
+- Test execution: 24 pytest tests passing; ruff clean; mypy clean
+- Code quality: Clean diff; minimal changes; high readability
+- Risk assessment: High-risk areas mitigated; low-risk areas unchanged; no regression detected
+- Status: ✓ APPROVED FOR MERGE — production-ready

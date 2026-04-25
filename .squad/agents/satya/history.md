@@ -60,3 +60,12 @@
 - No UI or model changes needed; minimal backend fix
 - Optional future enhancement: add `interactive_client_id` field to ADMEConnection for custom public-client support
 - Design approved — ready for implementation
+
+## 2026-04-25 Issue #6 Tenant-Compatible Interactive Auth Design
+- Root cause: Azure CLI public client ID (from issue #5) is blocked in IPS-Energy tenant — some enterprises restrict external app consent via policies, conditional access, or allowlists
+- New approach: Use customer's own configured app registration (from Settings) instead of hardcoded Microsoft public client
+- Scope fix: Hardcode ADME scope to `https://energy.azure.com/.default` (constant across all instances) instead of deriving from client_id
+- Why this works: Customer's app is guaranteed to exist in their tenant and be authorized by their admin; scope is resource-based (ADME), not client-based
+- No UI or model changes needed beyond scope constant
+- Files to change: `app/services/auth.py` (remove AZURE_CLI_PUBLIC_CLIENT_ID, use connection.client_id), `app/models/connection.py` (hardcode scope property), tests (update assertions)
+- Design approved — ready for implementation

@@ -57,3 +57,16 @@
 - Tests: Updated test_auth.py and test_auth_service.py assertions, added AADSTS7000218 regression test, added callback success integration test
 - Validation: All tests passing (18/18), ruff clean, mypy strict passing, no regressions, code coverage 93% (exceeds >=90% gate)
 - Status: Implementation complete, approved for merge
+
+## 2026-04-25 Issue #6 Tenant-Compatible Interactive Auth Implementation
+- Root cause: Azure CLI public client ID is blocked in some enterprise tenants (IPS-Energy) due to consent policies or allowlists
+- Solution: Removed hardcoded AZURE_CLI_PUBLIC_CLIENT_ID; InteractiveBrowserCredential now uses `connection.client_id` (customer's own app registration)
+- Scope fix: Updated `ADMEConnection.scope` property to return hardcoded `https://energy.azure.com/.default` (constant across all ADME instances)
+- Why it works: Customer's configured app is guaranteed to exist in their tenant and be authorized; hardcoded scope is resource-based (ADME's identity), not client-based
+- Changes made:
+  - `app/services/auth.py`: Removed AZURE_CLI_PUBLIC_CLIENT_ID constant; InteractiveBrowserCredential instantiation now uses connection.client_id
+  - `app/models/connection.py`: scope property now returns hardcoded constant instead of deriving from client_id
+  - Tests: Updated scope assertions in test_auth.py and test_auth_service.py; added test_interactive_uses_connection_client_id; added test_scope_is_hardcoded_adme_resource
+- Validation: All tests passing (24/24), ruff clean, mypy strict passing, no regressions
+- Service principal: Unchanged logic, uses same hardcoded scope
+- Status: Implementation complete, approved for merge

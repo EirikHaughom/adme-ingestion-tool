@@ -113,3 +113,29 @@
 **By:** Kevin (Backend Dev)
 **What:** Updated pp/services/auth.py to use Azure CLI public client ID ( 4b07795-a710-4f9e-9640-a91e60e60e08) when creating InteractiveBrowserCredential for user impersonation. Preserved connection.client_id for ADME scope derivation. Preserved ClientSecretCredential for service principal unchanged. Updated 	ests/test_auth.py and 	ests/test_auth_service.py to assert public client ID and preserved ADME scope behavior. Added AADSTS7000218 regression test case. All validation clean: pytest, ruff, mypy passing; no regressions.
 **Why:** Confidential clients reject public-client flows; Azure CLI's public client is trusted and standard pattern for interactive ADME access. No UI/model changes required — pure backend fix.
+
+### 2026-04-25T19:54:06.175+02:00: Tenant-compatible interactive auth design (issue #6)
+**By:** Satya (Lead)
+**What:** Interactive browser auth was failing in IPS-Energy tenant with AADSTS700016 error on hardcoded Azure CLI public client ID (04b07795-a710-4f9e-9640-a91e60e60e08). Root cause: that app is blocked or not consented in customer's tenant. Solution: (1) Use customer's own configured client_id for InteractiveBrowserCredential instead of hardcoded public ID, (2) Hardcode ADME scope to https://energy.azure.com/.default (constant across all instances) instead of deriving from client_id. No UI or model changes required — customer already provides app registration in Settings form that is guaranteed to exist and be authorized in their tenant.
+**Why:** Azure CLI public client is Microsoft's first-party app; some tenants block unregistered external applications via consent restrictions or conditional access. Customer's configured app registration is local to their tenant and already authorized by their admin. Scope is resource-based (ADME's energy.azure.com), not client-based, so must be constant for both interactive and service-principal flows.
+
+#### Files to Change
+- **Kevin (backend):** pp/services/auth.py (remove AZURE_CLI_PUBLIC_CLIENT_ID, use connection.client_id), pp/models/connection.py (hardcode scope property), tests (update assertions)
+- **Judson (UI):** No changes required
+- **Charlie (testing):** Update scope assertions in test_auth.py and test_auth_service.py
+
+#### Implementation Notes
+- InteractiveBrowserCredential instantiated with client_id=connection.client_id (user's app)
+- Both auth methods (user impersonation and service principal) use scope https://energy.azure.com/.default
+- Service-principal ClientSecretCredential logic unchanged, but now uses updated scope
+- No new UI fields or user inputs required
+
+### 2026-04-25T19:54:06.175+02:00: Tenant-compatible auth acceptance criteria & gates (issue #6)
+**By:** Charlie (Tester)
+**What:** Defined acceptance criteria for tenant-compatible auth fix: (1) Interactive browser login succeeds in IPS-Energy tenant with customer's own client ID (no AADSTS700016), (2) Scope is hardcoded to https://energy.azure.com/.default (not derived from client_id), (3) Service principal auth remains unchanged, (4) Unit tests updated for new scope and client ID behavior, (5) Integration tests confirm Settings flow succeeds, (6) Regression tests confirm service principal unchanged, (7) Documentation/code comments explain why hardcoded Azure CLI ID was removed.
+**Why:** Tenant-specific auth failures require proof of fix in actual customer tenant. Scope hardcoding changes contract semantics; must verify both auth methods work with constant scope and customer's app registration. Regression testing ensures service principal and error handling still work.
+
+### 2026-04-25T19:54:06.175+02:00: Tenant-compatible auth implementation (issue #6)
+**By:** Kevin (Backend Dev)
+**What:** Removed hardcoded AZURE_CLI_PUBLIC_CLIENT_ID; InteractiveBrowserCredential now uses connection.client_id (customer's own app registration). Updated ADMEConnection.scope property to return https://energy.azure.com/.default (hardcoded constant). Both interactive and service-principal auth now use this constant scope. Updated assertions in ests/test_auth.py and ests/test_auth_service.py to expect hardcoded scope and customer's client_id. All validation clean: pytest, ruff, mypy passing; no regressions.
+**Why:** Customer's configured app is guaranteed to exist and be consented in their tenant. Hardcoded scope is resource-based (ADME's identity) and applies to all ADME instances uniformly. Removes tenant-specific auth failures and simplifies scope management.
