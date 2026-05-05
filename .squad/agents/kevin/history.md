@@ -21,6 +21,8 @@
 - 2026-05-05T19:48:42.932+02:00: Persistent storage planning keeps PGlite out of backend scope for this Python/Streamlit app; dev should default to SQLite through SQLAlchemy, while production uses an operator-supplied PostgreSQL database through a single database URL contract.
 - 2026-05-05T19:48:42.932+02:00: First persisted aggregates should be non-secret ADME connection profiles, an active-profile pointer, and latest health-check runs/results; client secrets, MSAL pending flows, user tokens, and auth caches remain Streamlit-session or external-secret concerns.
 - 2026-05-05T19:48:42.932+02:00: Proposed backend storage modules are `app\storage\config.py`, `engine.py`, `models.py`, `session.py`, `repositories\connection_profiles.py`, and `repositories\health_runs.py`, with Alembic metadata sourced from the storage models.
+- 2026-05-05T20:00:00.287+02:00: Implemented `app\storage\` with SQLAlchemy 2.x repositories, Alembic migrations, SQLite auto-migration, PostgreSQL revision checks, URL redaction, and explicit rejection of secret-bearing connection profiles.
+- 2026-05-05T20:00:00.287+02:00: Alembic's required `app.storage.migrations` package owns migration helpers because Python cannot expose both an importable `app.storage.migrations` module and a same-named migrations package.
 
 ## 2026-04-24 Issue #2 Contract Corrections (Revision Batch)
 - Fixed Indexer probe contract: removed mutating GET /api/indexer/v2/reindex, replaced with read-only GET /api/indexer/v2/readiness_check

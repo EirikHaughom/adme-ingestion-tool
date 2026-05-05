@@ -81,3 +81,8 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+## 2026-05-05T20:00:00.287+02:00 Storage UI Persistence Wiring
+- Added Streamlit startup hydration through `app.storage_bridge` so Welcome and Settings can load the active saved profile plus latest validation without storing auth material in session persistence.
+- Save Settings now sends only a secret-free connection profile to storage while keeping service-principal `client_secret` in Streamlit session state for the current operator session.
+- Test Connection keeps existing session health behavior and records completed health results through storage when available; storage failures surface clear UI warnings/errors without blocking safe session-only use.
+- Validation: `python -m pytest -q`; `python -m ruff check app tests`; `python -m mypy app tests`.

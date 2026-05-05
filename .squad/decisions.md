@@ -23,6 +23,173 @@
 **Why:** `InteractiveBrowserCredential` owns its own localhost callback listener on port 8400 and cannot return the browser session to the running Streamlit app. MSAL authorization-code + PKCE lets the app receive the callback, complete sign-in inside Streamlit, and preserve the service-principal path unchanged.
 **Notes:** Target UX is Sign In -> Entra login -> return to Streamlit authenticated. Main implementation risk is consuming and clearing OAuth callback query parameters exactly once across Streamlit reruns.
 
+### 2026-05-05T20:00:00.287+02:00: Storage implementation package boundary
+**By:** Kevin
+
+## Decision
+
+The backend storage foundation is implemented under `app\storage\` using SQLAlchemy 2.x and Alembic. SQLite is the default when `DATABASE_URL` is unset and can auto-run migrations for local development; PostgreSQL remains operator-supplied through `DATABASE_URL` and only receives startup revision checks.
+
+## Notes
+
+- `client_secret`, MSAL flow material, tokens, auth codes, refresh tokens, and token caches are not schema fields and are rejected before profile persistence.
+- Repository methods return domain dataclasses and existing `ADMEConnection` / `ServiceHealthResult` objects, not ORM rows or sessions.
+- Alembic helper functions live in the `app.storage.migrations` package `__init__` because the required migration script package conflicts with a same-named `migrations.py` import path.
+- Query paths are indexed for non-deleted profile listing, active-profile lookup, latest health runs by profile, and service-result ordering.
+
+# Judson storage UI wiring
+
+Date: 2026-05-05T20:00:00.287+02:00
+
+Decision: Streamlit pages use `app.storage_bridge` as the presentation-layer adapter to Kevin's `app.storage` repositories rather than importing storage internals directly.
+
+- Settings and Welcome load the active persisted profile into Streamlit session state only when needed.
+- Save Settings and Test Connection persist a non-secret profile; `client_secret`, pending sign-in, and tokens remain session-only.
+- Completed health validation results are recorded after successful Test Connection runs.
+- Storage startup/write failures show operator-facing feedback and keep safe session-only behavior without switching backend modes.
+
+# 2026-05-05T20:00:00.287+02:00: Persistent storage verification tests
+
+**By:** Charlie
+
+## Decision
+
+Added storage verification coverage in two layers:
+
+- `tests/test_storage_bridge.py` verifies the UI-facing bridge can load saved
+  connection and health state from storage-shaped modules, strips
+  `client_secret` before repository calls, and lets Settings plus Welcome render
+  persisted non-secret fields without operator re-entry.
+- `tests/test_storage_contract.py` verifies the concrete `app.storage`
+  implementation when present: SQLite defaults/redaction, clean SQLite
+  initialization, non-secret profile round-trip, active profile restart
+  survival, persisted health results with checked timestamp, and rollback on an
+  injected health-result write failure.
+
+## Why
+
+The accepted contract is bigger than the happy path. The tests now force the
+storage boundary to preserve the non-secret/session-secret split and make UI
+loading observable instead of assumed.
+
+## Evidence
+
+- `python -m pytest --no-cov -q` — 101 passed, 1 skipped.
+- `python -m pytest` — passed with configured coverage.
+- `python -m ruff check app tests` — passed.
+- `python -m mypy app tests` — passed.
+
+## Notes
+
+The one skipped test is the unavailable-storage warning path; it is skipped only
+when the concrete `app.storage` package exists in the working tree.
+
+### 2026-05-05T20:00:00.287+02:00: Storage implementation review
+**By:** Satya
+
+## Verdict
+
+APPROVE.
+
+## Evidence against the acceptance contract
+
+- **SQLite default at `.adme/adme.db`.** `app/storage/config.py::resolve_storage_config` returns a SQLite config rooted at `.adme/adme.db` when `DATABASE_URL` is unset or blank. `_default_sqlite_path` resolves under the cwd. Covered by `test_default_storage_config_uses_local_sqlite`.
+- **PostgreSQL via operator-supplied `DATABASE_URL`; no broken-prod fallback.** `_config_from_database_url` raises `ValueError` for invalid or non-sqlite/non-postgresql URLs instead of silently falling back. `test_invalid_database_url_does_not_fallback_to_sqlite` and `test_unsupported_database_url_does_not_fallback_to_sqlite` lock this in.
+- **PGlite out of scope.** No JS sidecar; only SQLAlchemy/Alembic and optional `psycopg[binary]` (extras).
+- **SQLAlchemy/Alembic boundary under `app/storage`.** ORM rows in `models.py`, repositories in `repositories/`, sessions in `session.py`, engine factory in `engine.py`, migrations under `migrations/`. UI/app code interact via `app.storage_bridge` and the domain `ConnectionProfile` / `HealthRunSummary` dataclasses, not ORM rows.
+- **No persisted secrets / MSAL / tokens / passwords; redacted DB URLs.** `ConnectionProfileRepository._validate_profile` rejects any `client_secret`; `storage_bridge.connection_profile_without_secret` strips it before crossing the boundary; profiles loaded from rows always reconstruct `ADMEConnection` with `client_secret=""`. `StorageConfig.url` is `repr=False`; `safe_description` redacts PostgreSQL credentials and yields a plain SQLite path. No tables for auth flows or tokens.
+- **SQLite dev auto-migrates; PostgreSQL gets revision check, no startup migration.** `ensure_storage_ready` calls `run_sqlite_migrations` for SQLite and, for PostgreSQL, compares the live revision against the Alembic head, raising `StorageMigrationError` with operator-facing guidance if they diverge. README documents the explicit `alembic upgrade head` step.
+- **Settings/Welcome hydrate profiles/health while auth/secrets stay session-only.** `app/main.py` and `app/pages/1_⚙️_Settings.py` call `load_persisted_connection_state` / `persist_connection_profile` / `persist_health_run`; copy in both pages reiterates that client secrets and user sign-in stay session-bound.
+
+## Validation
+
+- Coordinator-reported `python -m pytest` (101 passed, 1 skipped), `python -m ruff check app tests`, `python -m mypy app tests` — all green and consistent with my read of the code.
+- Repository-level tests cover migrations, round-trip, secret rejection, health run atomicity, and active-profile linkage. Bridge-level tests cover storage-unavailable warning, secret stripping, and Settings/Welcome hydration without re-entering fields.
+
+## Non-blocking follow-ups
+
+- `app/storage_bridge.py` carries a fairly elastic reflective dispatch path (`_first_callable`, `_accepts_keyword`, multiple aliases) that predates the now-stable `app.storage` public API. Once no alternate storage backends are anticipated, Kevin can collapse this onto the `_repository_api_from_storage_root` path and remove the alias scanning to reduce surface area.
+- `load_persisted_connection_state` returns `available=True` early when a connection already lives in `st.session_state`, skipping a possible restore of the latest stored health run. Acceptable today, but Judson should consider whether Welcome should still surface the latest persisted validation summary in that case.
+- README contains a small typo (`befoore`) in the production migration section. Scribe or Scott can fix on the next docs sweep.
+
+## Lockout
+
+No revision required. Kevin remains free to act on the follow-ups; no different-author rotation is needed because this is an approval.
+
+# 2026-05-05: Persistent Storage Documentation for Operators
+
+**By:** Scott (Cloud DevOps)  
+**Task:** Update operator/runtime documentation for the accepted persistent storage implementation
+
+## Decision
+
+Added comprehensive **Data Storage** section to README.md documenting the persistent storage contract for operators. The documentation covers development defaults, production requirements, migration procedures, credential handling, what is and is not persisted, and deployment limitations.
+
+## Rationale
+
+The persistent storage architecture (SQLite dev default + PostgreSQL production) has been planned and accepted by the team (see history.md "2026-05-05: Persistent Storage & Deployment Configuration Planning"). Operators need clear, accurate documentation to:
+
+1. Understand SQLite is the default and supported dev storage
+2. Know PostgreSQL 14+ is required for production, containers, and multi-instance deployments
+3. Follow the correct migration command sequence
+4. Never commit plaintext database credentials
+5. Understand what data is persisted and what remains session-only
+6. Avoid PGlite; use real PostgreSQL when needed
+
+## Implementation
+
+Updated `README.md` with new **Data Storage** section containing:
+
+### Development: SQLite
+- Default storage at `.adme/adme.db` created automatically
+- Zero-setup path for local dev
+- Auto-migrations on startup
+
+### Production & Shared Deployments: PostgreSQL 14+
+- `DATABASE_URL` environment variable is the single credential contract
+- No split `ADME_DB_HOST`/`ADME_DB_PASSWORD` variables
+- PostgreSQL URL format documented
+- Explicit `alembic upgrade head` required before app startup
+
+### Database credentials subsection
+- Never store plaintext credentials in config files
+- Use Azure Key Vault, environment secrets, or cloud platform credential systems
+- App accepts `DATABASE_URL` environment variable only
+
+### What is stored
+- Connection profiles (ADME endpoint, tenant, client, partition, auth method, scope)
+- Health check results (summary and timestamp)
+
+### What is not stored
+- Client secrets, access tokens, refresh tokens, token caches
+- MSAL authorization flows, OAuth authorization codes
+- User authentication material
+
+### Limitations
+- SQLite not supported for Streamlit Cloud (ephemeral filesystem)
+- SQLite not supported for Azure Container Instances or Web Apps (ephemeral filesystem)
+- SQLite not supported for multi-instance or horizontally scaled deployments
+- PostgreSQL required in those cases
+
+### Stack table update
+Updated to include `Storage: SQLAlchemy 2.x, Alembic`
+
+## Scope
+
+Documentation only. No code, tests, pyproject.toml, or deployment files modified. This is alignment of operator-facing documentation with the accepted persistent storage plan.
+
+## Dates
+
+Used `2026-05-05` per CURRENT_DATETIME in spawn context.
+
+## Next Steps
+
+When Kevin's SQLAlchemy models and repository layer are merged, and Judson's Streamlit session ↔ database synchronization is ready, operators will have complete documentation for local SQLite and production PostgreSQL workflows.
+
+## Team Notes
+
+This completes Scott's ownership scope for operator/runtime documentation of the persistent storage implementation. Remaining infrastructure work (Alembic setup, Key Vault integration, migration runbooks) is owned by Scott in later phases pending implementation of Kevin's storage models and Judson's UI persistence.
+
 ## Governance
 
 - All meaningful changes require team consensus

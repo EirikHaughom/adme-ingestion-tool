@@ -62,3 +62,17 @@ Charlie (Tester) owns test strategy, acceptance criteria, and quality gates for 
 - Charlie: Phase 4 gating (acceptance criteria verification)
 
 **Ready to gate implementation:** All A1–A8 criteria and test suites committed to decisions.md. Team sign-off required before coding begins.
+
+## 2026-05-05T20:00:00.287+02:00: Persistent Storage Verification Implementation
+
+- Added storage bridge tests that prove persisted connection and health state can
+  hydrate Settings and Welcome flows without operator re-entry of non-secret
+  fields, while keeping client secrets out of storage-bound calls.
+- Added concrete `app.storage` contract tests for SQLite default/redaction,
+  migration initialization, non-secret profile round-trip, active profile
+  restart survival, health result timestamp retrieval, and rollback under
+  injected health-result write failure.
+- Concrete `app.storage` appeared during the run, so the acceptance tests were
+  adapted to its SQLAlchemy repository classes and UI bridge.
+- Validation: `python -m pytest --no-cov -q` passed with 101 passed and 1
+  skipped; configured `python -m pytest`, Ruff, and mypy also passed.

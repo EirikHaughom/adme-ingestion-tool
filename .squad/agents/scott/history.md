@@ -100,3 +100,27 @@
 - Judson: Streamlit session state ↔ database synchronization
 - Scott: Alembic setup, env vars, Key Vault plumbing, operator docs
 - Charlie: Acceptance criteria verification, test matrix (SQLite + Postgres)
+
+## 2026-05-05: Persistent Storage Operator Documentation (Complete)
+
+**Status:** COMPLETE
+
+**Decision:** Added comprehensive **Data Storage** section to README.md documenting the accepted persistent storage contract for operators.
+
+**Key documentation additions:**
+- **Development:** SQLite default at `.adme/adme.db`, auto-migrations on startup, zero setup required
+- **Production/shared:** PostgreSQL 14+ via `DATABASE_URL` environment variable (single contract, no split variables)
+- **Migrations:** Auto for SQLite dev; explicit `alembic upgrade head` for PostgreSQL production before app startup
+- **Credentials:** Azure Key Vault or environment secrets only; never plaintext config files
+- **What persists:** Connection profiles and health check results (non-sensitive)
+- **What doesn't:** Client secrets, access tokens, authorization codes, user auth material (session-only)
+- **Limitations:** SQLite not supported for Streamlit Cloud, Azure Web Apps, or multi-instance deployments (PostgreSQL required)
+- **Stack update:** Added `Storage: SQLAlchemy 2.x, Alembic` to technology table
+
+**Operator-facing clarity:**
+- Single `DATABASE_URL` contract prevents environment variable confusion
+- Explicit migration commands protect production deployments from accidental data loss
+- Non-secret/secret boundary clearly stated for credential handling
+- Deployment constraints documented upfront (SQLite limitations on Streamlit Cloud, containers, HA)
+
+**Decision file:** `.squad/decisions/inbox/scott-storage-docs.md`

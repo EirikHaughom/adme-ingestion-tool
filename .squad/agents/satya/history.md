@@ -113,3 +113,13 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - 2026-05-05T19:48:42.932+02:00: Storage scope kept deliberately narrow for Phase 1: connection_profile + health_run_summary only. Secrets (client_secret, MSAL tokens) are forbidden in the DB and Charlie gates that boundary. `ADMEConnection` stays a dataclass; repositories return domain dataclasses, not ORM objects, so existing contracts in `app/connection_state.py` and `app/models/connection.py` are unaffected.
 - 2026-05-05T19:48:42.932+02:00: ORM portability rule: dialect-portable column types only (no `JSONB`, no `ARRAY`, no Postgres-only server defaults). Alembic auto-upgrade is allowed on SQLite startup but Postgres operators must run migrations explicitly. Phase ordering is Kevin (storage layer + repos) -> Judson (Settings/Welcome wiring) -> Scott (prod deploy + secret-store decision) -> Charlie (matrix tests).
 - 2026-05-05T19:48:42.932+02:00: Open follow-on decisions to track: (1) production secret storage strategy owned by Scott, (2) multi-operator scoping model when we move past single-operator, (3) whether to publish a `[postgres]` install extra.
+
+## 2026-05-05 Storage implementation review (APPROVE)
+- Verified storage boundary lives under app/storage with repository/domain interface (ConnectionProfile, HealthRunSummary) outside ORM rows.
+- Defaults to SQLite at .adme/adme.db when DATABASE_URL is unset; invalid or non-sqlite/non-postgresql URLs raise instead of falling back, satisfying the no-broken-prod-fallback rule.
+- Connection profile persistence rejects client_secret at the repository and the storage_bridge strips it before crossing the boundary; ADMEConnection rebuilt from rows always has client_secret=''. No MSAL/auth code/token persistence.
+- Database URLs redacted via safe_description; raw URL hidden from StorageConfig repr.
+- SQLite dev auto-migrates via Alembic on ensure_storage_ready; PostgreSQL gets a head-revision check that raises StorageMigrationError with operator guidance instead of auto-upgrading.
+- Settings/Welcome hydrate persisted profile and latest health run without touching auth state; user impersonation and client_secret remain session-only.
+- Coordinator validation passed: pytest 101 passed/1 skipped, ruff clean, mypy clean.
+- Non-blocking follow-ups: storage_bridge reflective dispatch (_first_callable / _accepts_keyword) is more elastic than needed now that app.storage exports a stable API; consider trimming once no alternate storage backends are anticipated. load_persisted_connection_state skips restoring saved health when a session connection already exists - acceptable but worth a Judson UX pass later.
