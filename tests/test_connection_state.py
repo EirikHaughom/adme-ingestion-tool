@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from app.connection_state import (
     CONNECTION_KEY,
+    DEFAULT_CONNECTION_NAME,
     HEALTH_ERROR_KEY,
     HEALTH_RESULTS_KEY,
     USER_AUTH_FLOW_KEY,
@@ -22,7 +27,18 @@ from app.connection_state import (
     summarize_health,
 )
 from app.models.connection import ADMEConnection, AuthMethod, ServiceHealthResult
+from app.services import settings_store
 from app.services.auth import UserAuthFlowStart, UserAuthState
+
+
+@pytest.fixture
+def isolated_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the on-disk settings store at tmp_path for the duration of the test."""
+    target = tmp_path / "settings.db"
+    monkeypatch.setenv("ADME_SETTINGS_DB", str(target))
+    return target
 
 
 def test_get_overall_state_requires_a_valid_connection() -> None:
@@ -263,3 +279,107 @@ def test_results_to_table_rows_are_operator_friendly() -> None:
         }
     ]
     assert format_auth_method(AuthMethod.SERVICE_PRINCIPAL) == "Service principal"
+
+
+def test_ensure_session_defaults_hydrates_from_active_stored_connection(
+    isolated_store: Path,
+) -> None:
+    stored = ADMEConnection(
+        endpoint="https://stored.energy.azure.com",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        client_id="22222222-2222-2222-2222-222222222222",
+        data_partition_id="stored-opendes",
+    )
+    settings_store.save_connection(DEFAULT_CONNECTION_NAME, stored)
+    settings_store.set_active_connection(DEFAULT_CONNECTION_NAME)
+
+    session_state: dict[str, object] = {}
+    ensure_session_defaults(session_state)
+
+    hydrated = session_state[CONNECTION_KEY]
+    assert isinstance(hydrated, ADMEConnection)
+    assert hydrated.endpoint == stored.endpoint
+    assert hydrated.data_partition_id == stored.data_partition_id
+    assert hydrated.client_secret == ""
+
+
+def test_ensure_session_defaults_no_hydration_when_nothing_active(
+    isolated_store: Path,
+) -> None:
+    session_state: dict[str, object] = {}
+
+    ensure_session_defaults(session_state)
+
+    assert session_state[CONNECTION_KEY] is None
+
+
+def test_ensure_session_defaults_preserves_existing_session_connection(
+    isolated_store: Path,
+) -> None:
+    on_disk = ADMEConnection(
+        endpoint="https://disk.energy.azure.com",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        client_id="22222222-2222-2222-2222-222222222222",
+        data_partition_id="disk-opendes",
+    )
+    settings_store.save_connection(DEFAULT_CONNECTION_NAME, on_disk)
+    settings_store.set_active_connection(DEFAULT_CONNECTION_NAME)
+
+    in_session = ADMEConnection(
+        endpoint="https://session.energy.azure.com",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        client_id="22222222-2222-2222-2222-222222222222",
+        data_partition_id="session-opendes",
+    )
+    session_state: dict[str, object] = {CONNECTION_KEY: in_session}
+
+    ensure_session_defaults(session_state)
+
+    # Session value wins; disk value must not overwrite an in-flight edit.
+    assert session_state[CONNECTION_KEY] is in_session
+
+
+def test_ensure_session_defaults_swallows_store_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise settings_store.SettingsStoreError("disk on fire")
+
+    monkeypatch.setattr(settings_store, "initialize_store", _boom)
+
+    session_state: dict[str, object] = {}
+    # Must not raise — hydration is best-effort.
+    ensure_session_defaults(session_state)
+
+    assert session_state[CONNECTION_KEY] is None
+    assert session_state[HEALTH_RESULTS_KEY] == []
+    assert session_state[HEALTH_ERROR_KEY] == ""
+    assert session_state[USER_AUTH_FLOW_KEY] is None
+    assert session_state[USER_AUTH_STATE_KEY] is None
+
+
+def test_save_connection_persists_to_store_and_marks_active(
+    isolated_store: Path,
+) -> None:
+    session_state: dict[str, object] = {}
+    ensure_session_defaults(session_state)
+
+    new_connection = ADMEConnection(
+        endpoint="https://new.energy.azure.com",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        client_id="22222222-2222-2222-2222-222222222222",
+        data_partition_id="new-opendes",
+        auth_method=AuthMethod.SERVICE_PRINCIPAL,
+        client_secret="never-persisted",
+    )
+    save_connection(session_state, new_connection)
+
+    assert (
+        settings_store.get_active_connection_name() == DEFAULT_CONNECTION_NAME
+    )
+    persisted = settings_store.load_connection(DEFAULT_CONNECTION_NAME)
+    assert persisted is not None
+    assert persisted.endpoint == new_connection.endpoint
+    assert persisted.auth_method == AuthMethod.SERVICE_PRINCIPAL
+    # Secret must be dropped at the persistence boundary.
+    assert persisted.client_secret == ""

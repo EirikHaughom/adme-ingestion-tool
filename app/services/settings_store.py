@@ -1,0 +1,295 @@
+"""Local SQLite-backed store for persisted ADME connection settings.
+
+This module owns the durable on-disk record of operator-entered ADME
+connection configuration.  It is intentionally a thin layer over stdlib
+``sqlite3``: each public function opens a short-lived connection, runs a
+single logical operation, and closes the connection.  No module-global
+cursor, no Streamlit caching, no ORM.
+
+Auth/session material (access tokens, MSAL pending flows, user auth state,
+client secrets) is **never** written here.  ``client_secret`` is dropped
+from any :class:`ADMEConnection` before insert/update — see
+:func:`save_connection`.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+from app.models.connection import ADME_RESOURCE_SCOPE, ADMEConnection, AuthMethod
+
+__all__ = [
+    "DEFAULT_DB_PATH",
+    "SettingsStoreError",
+    "clear_active_connection",
+    "delete_connection",
+    "get_active_connection_name",
+    "get_db_path",
+    "initialize_store",
+    "list_connections",
+    "load_connection",
+    "save_connection",
+    "set_active_connection",
+]
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_DB_PATH: Path = Path.home() / ".adme-ingestion-tool" / "settings.db"
+ENV_DB_PATH = "ADME_SETTINGS_DB"
+
+_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS connections (
+        name              TEXT PRIMARY KEY,
+        endpoint          TEXT NOT NULL,
+        tenant_id         TEXT NOT NULL,
+        client_id         TEXT NOT NULL,
+        data_partition_id TEXT NOT NULL,
+        token_scope       TEXT NOT NULL DEFAULT 'https://energy.azure.com/.default',
+        auth_method       TEXT NOT NULL CHECK (auth_method IN
+                              ('user_impersonation', 'service_principal')),
+        is_active         INTEGER NOT NULL DEFAULT 0,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_active
+        ON connections(is_active) WHERE is_active = 1
+    """,
+)
+
+
+class SettingsStoreError(Exception):
+    """Raised when the local settings store cannot be read or written."""
+
+
+def get_db_path() -> Path:
+    """Return the resolved SQLite path, honoring ``ADME_SETTINGS_DB``."""
+    override = os.environ.get(ENV_DB_PATH)
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_DB_PATH
+
+
+def _resolve_path(db_path: Path | None) -> Path:
+    return Path(db_path) if db_path is not None else get_db_path()
+
+
+@contextmanager
+def _connect(db_path: Path | None) -> Iterator[sqlite3.Connection]:
+    """Open a short-lived sqlite3 connection with foreign keys enabled."""
+    resolved = _resolve_path(db_path)
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        msg = f"Could not create settings directory at {resolved.parent}."
+        logger.error("settings_store: %s (%s)", msg, exc)
+        raise SettingsStoreError(msg) from exc
+    try:
+        connection = sqlite3.connect(resolved, isolation_level=None)
+    except sqlite3.Error as exc:
+        msg = f"Could not open settings database at {resolved}."
+        logger.error("settings_store: %s (%s)", msg, exc)
+        raise SettingsStoreError(msg) from exc
+    connection.row_factory = sqlite3.Row
+    try:
+        with closing(connection):
+            yield connection
+    except sqlite3.Error as exc:
+        msg = "Settings database operation failed."
+        logger.error("settings_store: %s (%s)", msg, exc)
+        raise SettingsStoreError(msg) from exc
+
+
+def initialize_store(db_path: Path | None = None) -> None:
+    """Create the DB file and schema if missing.  Idempotent."""
+    with _connect(db_path) as conn:
+        for statement in _SCHEMA_STATEMENTS:
+            conn.execute(statement)
+
+
+def _row_to_connection(row: sqlite3.Row) -> ADMEConnection:
+    try:
+        auth_method = AuthMethod(row["auth_method"])
+    except ValueError as exc:
+        msg = (
+            f"Stored connection {row['name']!r} has an unknown auth_method "
+            f"{row['auth_method']!r}."
+        )
+        logger.error("settings_store: %s", msg)
+        raise SettingsStoreError(msg) from exc
+    token_scope = row["token_scope"] or ADME_RESOURCE_SCOPE
+    return ADMEConnection(
+        endpoint=row["endpoint"],
+        tenant_id=row["tenant_id"],
+        client_id=row["client_id"],
+        data_partition_id=row["data_partition_id"],
+        token_scope=token_scope,
+        auth_method=auth_method,
+        client_secret="",
+    )
+
+
+def list_connections(
+    db_path: Path | None = None,
+) -> list[tuple[str, ADMEConnection]]:
+    """Return saved ``(name, connection)`` pairs, ordered by name."""
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM connections ORDER BY name ASC"
+        ).fetchall()
+    return [(row["name"], _row_to_connection(row)) for row in rows]
+
+
+def load_connection(
+    name: str,
+    db_path: Path | None = None,
+) -> ADMEConnection | None:
+    """Return the saved connection for ``name``, or ``None`` if missing."""
+    if not name:
+        return None
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM connections WHERE name = ?",
+            (name,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_connection(row)
+
+
+def save_connection(
+    name: str,
+    connection: ADMEConnection,
+    db_path: Path | None = None,
+) -> None:
+    """Insert or update a saved connection by name.
+
+    ``client_secret`` is **never** written.  Service-principal operators must
+    re-enter the secret per session until encryption-at-rest lands.
+    """
+    if not name:
+        msg = "Cannot save a connection without a name."
+        logger.error("settings_store: %s", msg)
+        raise SettingsStoreError(msg)
+
+    now = datetime.now(UTC).isoformat()
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                """
+                INSERT INTO connections (
+                    name, endpoint, tenant_id, client_id, data_partition_id,
+                    token_scope, auth_method, is_active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    endpoint          = excluded.endpoint,
+                    tenant_id         = excluded.tenant_id,
+                    client_id         = excluded.client_id,
+                    data_partition_id = excluded.data_partition_id,
+                    token_scope       = excluded.token_scope,
+                    auth_method       = excluded.auth_method,
+                    updated_at        = excluded.updated_at
+                """,
+                (
+                    name,
+                    connection.endpoint,
+                    connection.tenant_id,
+                    connection.client_id,
+                    connection.data_partition_id,
+                    connection.token_scope,
+                    connection.auth_method.value,
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.Error:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+
+
+def delete_connection(
+    name: str,
+    db_path: Path | None = None,
+) -> None:
+    """Remove a saved connection by name.  No error if missing."""
+    if not name:
+        return
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM connections WHERE name = ?", (name,))
+
+
+def get_active_connection_name(
+    db_path: Path | None = None,
+) -> str | None:
+    """Return the currently active connection name, or ``None``."""
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT name FROM connections WHERE is_active = 1 LIMIT 1"
+        ).fetchone()
+    return row["name"] if row is not None else None
+
+
+def set_active_connection(
+    name: str,
+    db_path: Path | None = None,
+) -> None:
+    """Mark ``name`` as active and clear the active flag on all other rows.
+
+    Raises :class:`SettingsStoreError` if ``name`` does not exist.
+    """
+    if not name:
+        msg = "Cannot activate a connection without a name."
+        logger.error("settings_store: %s", msg)
+        raise SettingsStoreError(msg)
+
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM connections WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                msg = f"Cannot activate unknown connection {name!r}."
+                logger.error("settings_store: %s", msg)
+                raise SettingsStoreError(msg)
+            # Clear all active flags first to keep the partial unique index
+            # honest, then activate the requested row.
+            conn.execute(
+                "UPDATE connections SET is_active = 0 WHERE is_active = 1"
+            )
+            conn.execute(
+                "UPDATE connections SET is_active = 1, updated_at = ? "
+                "WHERE name = ?",
+                (datetime.now(UTC).isoformat(), name),
+            )
+        except sqlite3.Error:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+
+
+def clear_active_connection(db_path: Path | None = None) -> None:
+    """Clear the active flag on all rows.  Used on Sign Out / reset."""
+    initialize_store(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE connections SET is_active = 0 WHERE is_active = 1"
+        )

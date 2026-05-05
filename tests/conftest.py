@@ -2,10 +2,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.models.connection import OSDU_SERVICES, ServiceHealthResult
 from tests.support.streamlit_recorder import StreamlitRecorder
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the settings store at a per-test SQLite path.
+
+    Without this fixture, ``app.connection_state.ensure_session_defaults``
+    hydrates from the operator's real ``~/.adme-ingestion-tool/settings.db``
+    during any test that doesn't explicitly set ``ADME_SETTINGS_DB``.  That
+    cross-contaminates tests which assume a clean "no configuration yet"
+    starting state (notably the main page and Settings page tests).  By
+    making isolation autouse, hydration NEVER touches the user's real
+    profile during testing.
+    """
+    target = tmp_path / "settings.db"
+    monkeypatch.setenv("ADME_SETTINGS_DB", str(target))
+    return target
 
 
 @pytest.fixture
