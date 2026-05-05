@@ -18,6 +18,9 @@
 - 2026-05-05T14:11:09.427+02:00: Issue #8 auth service now exposes MSAL user-flow helpers that return a redacted pending-flow wrapper and a session-scoped user auth state; user tokens are supplied back to `get_token()` explicitly and service-principal auth remains on `ClientSecretCredential`.
 - 2026-05-05T15:11:17.396+02:00: `ADMEConnection.token_scope` is static configuration; `connection.scope` trims it and falls back to the ADME default when blank so blank UI input does not invalidate otherwise valid connections.
 - 2026-05-05T15:11:17.396+02:00: Token scope Settings guidance was mechanically wrapped to satisfy Ruff E501 without changing copy semantics or backend auth behavior.
+- 2026-05-05T19:48:42.932+02:00: Persistent storage planning keeps PGlite out of backend scope for this Python/Streamlit app; dev should default to SQLite through SQLAlchemy, while production uses an operator-supplied PostgreSQL database through a single database URL contract.
+- 2026-05-05T19:48:42.932+02:00: First persisted aggregates should be non-secret ADME connection profiles, an active-profile pointer, and latest health-check runs/results; client secrets, MSAL pending flows, user tokens, and auth caches remain Streamlit-session or external-secret concerns.
+- 2026-05-05T19:48:42.932+02:00: Proposed backend storage modules are `app\storage\config.py`, `engine.py`, `models.py`, `session.py`, `repositories\connection_profiles.py`, and `repositories\health_runs.py`, with Alembic metadata sourced from the storage models.
 
 ## 2026-04-24 Issue #2 Contract Corrections (Revision Batch)
 - Fixed Indexer probe contract: removed mutating GET /api/indexer/v2/reindex, replaced with read-only GET /api/indexer/v2/readiness_check
@@ -104,3 +107,31 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+
+## 2026-05-05: Persistent Storage Backend Contract (Complete)
+
+**Status:** PLANNING COMPLETE, SYNTHESIZED WITH TEAM
+
+**Decision:** SQLAlchemy 2.x + Alembic for dev SQLite and production PostgreSQL. Single `DATABASE_URL` configuration knob (not split ADME_*_* variables).
+
+**Key contract elements:**
+- `app/storage/` package boundary: config, engine, session, models, repositories
+- Repositories return domain dataclasses (ADMEConnection, HealthRunSummary), not ORM objects
+- No ORM imports outside `app/storage/` — keeps existing contracts in `app/connection_state` and `app/models/connection` unaffected
+- Strict: no client_secret or auth tokens in database (Charlie gates this)
+- Portable types only: String, Text, Integer, Boolean, DateTime (no JSONB, ARRAY, Postgres-only defaults)
+- Schema: connection_profiles, active_profile, health_runs, health_run_results
+- Transactions atomic per operation (save profile + set active = one transaction; record health run + all service rows = one transaction)
+
+**Conflict resolved with Scott:**
+- Scott proposed split environment variables (ADME_STORAGE_ENGINE, ADME_DB_HOST, ADME_DB_PORT, ADME_DB_USER, ADME_DB_PASSWORD)
+- Scott proposed storing client_secret in database
+- Decision: Single DATABASE_URL (Satya/Kevin/Charlie consensus). Scott to reconcile Key Vault integration to resolve into DATABASE_URL before storage layer sees it.
+
+**Phase 1 readiness (Kevin owns):**
+- Add sqlalchemy>=2.0, alembic>=1.14, psycopg[binary] as optional postgres extra
+- Repository contracts published before UI work (Judson)
+- Exit criteria: repo tests pass SQLite (in-memory + file) and PostgreSQL (testcontainers)
+- No app/ui code imports SQLAlchemy directly
+
+**Notes:** Satya/Scott/Judson/Charlie sign-off required before Kevin begins implementation. DATABASE_URL configuration precedence and secret redaction strategy locked. Future: Scott decides where client_secret lives in prod (Key Vault, env, OS keychain).

@@ -5,156 +5,60 @@
 - **Stack:** Python, Streamlit, Azure, ADME/OSDU APIs
 - **Created:** 2026-04-24
 
-## Learnings
+## Current Role Summary
 
-- Charlie owns test strategy, acceptance criteria, and quality gates for the control plane.
-- The highest-risk areas are likely auth, operator actions, backend integration failures, and regression coverage.
-- 2026-04-24T14:38:18.059+02:00: Issue #2 health validation should cover the core ADME/OSDU M25 services: storage, search, schema, legal, entitlements, workflow, file, dataset, indexer, notification, and eds.
-- 2026-04-24T14:38:18.059+02:00: A reusable Streamlit test pattern in this repo is to monkeypatch the module-level `st` import with `tests.support.streamlit_recorder.StreamlitRecorder` and assert recorded UI calls.
-- 2026-04-24T14:38:18.059+02:00: Key test paths for the welcome/settings work are `app\main.py`, `app\pages\`, `tests\conftest.py`, and `tests\test_main.py`.
-- 2026-04-24T14:38:18.059+02:00: The requested operator workflow needs welcome/settings pages, two auth modes (`user_impersonation` and `service_principal`), required connection inputs, and service-by-service health reporting.
-- 2026-04-24T14:38:18.059+02:00: `app\models\connection.py` is becoming the shared UI/backend contract for auth methods and health probes, but it currently introduces `data_partition_id` and omits `eds`, so review for issue #2 must check scope drift before approval.
-- 2026-05-05T14:11:09.427+02:00: Issue #8 auth review added regression coverage that distinguishes stale MSAL pending flows from newly generated retry flows after missing-pending, auth-denial, state-mismatch, and token-exchange failures.
+Charlie (Tester) owns test strategy, acceptance criteria, and quality gates for the control plane. Highest-risk areas: auth, operator actions, backend integration failures, regression coverage.
 
-- 2026-05-05T15:11:17.396+02:00: Manual token scope review found conflicting blank-scope decisions: Satya originally required blank/whitespace scopes to be invalid, while Kevin and Judson accepted blank-as-default fallback. For this gate, treat the Kevin/Judson fallback as the accepted behavior when tests, auth behavior, and operator guidance stay internally consistent. Settings field guidance must itself say token scope is not a token or secret; README-only safety wording is not enough.
+**Key learnings from prior work:**
+- Reusable Streamlit test pattern: monkeypatch st import with 	ests.support.streamlit_recorder.StreamlitRecorder
+- Health probe selection critical: avoid mutating endpoints, use read-only or dedicated endpoints
+- Team sign-off protocol: lead review, named reviser for issues, comprehensive re-review after fixes
+- Acceptance criteria defined upfront enable fast iteration and clear gate definition
+- Operator UX requires clear messaging for browser flows, tenant/scope, error recovery
+- Auth testing must cover mode switching, secret masking, per-service health, pending-flow regression
 
-- 2026-05-05T15:11:17.396+02:00: Manual token scope re-review after Scott's copy fix proved the functional scope gates now pass, but the production Settings copy introduced Ruff E501 line-length failures. A lockout-safe revision still must satisfy lint gates, not just page assertions.
+**Archived work:** Issues #2–#7 (auth architecture, browser login, callback fix, tenant auth, redirect). Issue #8 (MSAL integration) and manual token scope completed 2026-05-05. See history-archive.md for full details.
 
-- 2026-05-05T15:11:17.396+02:00: Final manual token scope review APPROVED after Kevin's mechanical formatting revision: targeted pytest, full pytest, Ruff, and mypy all passed, with Settings preserving explicit non-secret token-scope guidance.
+## 2026-05-05: Persistent Storage Verification Plan (Current)
 
-## 2026-04-24 Issue #2 Test Strategy & Review Gate (Issue #2)
-- Added acceptance criteria to issue #2: auth-mode coverage, per-service health matrices (M25: storage, search, schema, legal, entitlements, workflow, file, dataset, indexer, notification, eds)
-- Created reusable Streamlit page-test scaffolding (monkeypatch st import with StreamlitRecorder)
-- Developed auth-validation tests for mode switching and credential handling
-- Identified critical review risks: auth switching, unauthorized access, timeouts, mixed health states
-- Set review gate: blocked on test coverage for dangerous paths before product sign-off
-- Key paths: app/main.py, app/pages/, tests/conftest.py, tests/test_main.py
-- Coordinating with Satya on scope drift checks (data_partition_id, eds service inclusion)
+**Status:** PLANNING COMPLETE, SYNTHESIZED WITH TEAM
 
-## 2026-04-24 Issue #2 Final Review
-- Reviewed the current repo implementation and reran validation: `python -m pytest` and `python -m ruff check app tests && python -m mypy app tests` both passed.
-- Current issue #2 body now explicitly includes `data_partition_id` and lightweight probe endpoints, so the earlier scope-drift concern on that field is no longer a blocker.
-- Rejected the implementation because `app\models\connection.py` configures the Indexer probe as `GET /api/indexer/v2/reindex`, while the M25 Indexer spec defines `/reindex` as `PATCH` or `POST`; this will misreport Indexer health and is not a valid cheap read-only probe.
-- Named Satya to revise because the fix crosses backend contract, service probing, and the issue’s documented architecture, and Kevin/Judson are locked out for this revision cycle.
-- Reviewer lockout correction: Satya cannot revise because Satya authored the rejected connection-contract artifact, so Kevin is the required reviser for the Indexer probe correction and related health-test updates.
+**Acceptance criteria A1–A8 locked and ready for implementation review:**
 
-## 2026-04-24 Issue #2 Re-Review After Kevin Fix
-- Re-reviewed the actual repo state after Kevin changed the Indexer probe to `GET /api/indexer/v2/readiness_check` in `app\models\connection.py`.
-- Verified the fix end-to-end: `tests\test_connection_model.py`, `tests\test_health.py`, and `tests\test_health_service.py` now pin the readiness endpoint and guard against regression to `/reindex`.
-- Reran validation successfully: `python -m pytest` (40 passed) and `python -m ruff check app tests && python -m mypy app tests`.
-- Final reviewer verdict is APPROVE: the current implementation satisfies the issue #2 contract, keeps `client_secret` masked and session-scoped, preserves per-service matrix behavior, and includes EDS plus the corrected Indexer readiness probe.
+- **A1:** Storage configuration & mode switching (SQLite default .adme_dev.db, PostgreSQL via DATABASE_URL, unambiguous mode, clear startup log)
+- **A2:** Session ↔ persistent storage sync (connection persists, auth NOT persisted, health time-scoped, secrets NEVER)
+- **A3:** Migration safety & backward compatibility (version-controlled schema, fresh-install initialization, identical Postgres/SQLite schemas, pre-persistent-storage migration)
+- **A4:** Secret handling & sensitive data (no logging of secrets, masked UI, env-only DATABASE_URL, .gitignore enforcement)
+- **A5:** Failure states & recovery (connection failure graceful, corrupt DB detected, transaction rollback, clear state handling)
+- **A6:** Streamlit reruns & concurrent access (no data race, no per-interaction re-read, session/storage separation clear in code)
+- **A7:** CI/CD feasibility (tests without external Postgres, migrations tested in CI, optional Postgres developer path, no environment branches)
+- **A8:** Data integrity & constraints (NOT NULL/UNIQUE where needed, stable primary keys, UTC timestamps)
 
-## 2026-04-24 Issue #2 APPROVED
-- Final review after Kevin's Indexer readiness probe correction
-- All acceptance criteria verified as met:
-  * Auth-mode-specific field coverage (conditional client_secret)
-  * Per-service health matrices for all 11 M25 services (storage, search, schema, legal, entitlements, workflow, file, dataset, indexer, notification, eds)
-  * Explicit partial-failure handling without secret leakage (timeouts as error, HTTP errors as unhealthy with code)
-  * Indexer readiness probe correction locked by tests
-  * No scope creep beyond issue #2 contract
-- Issue #2 updated with final review status: APPROVED
-- Remaining non-blocking risk: live ADME/Entra validation before production use (operator responsibility)
-- Ready to close issue #2
+**Test phases ready to execute:**
+1. **Unit tests (Phase 1):** Schema/migration, connection persistence, health results, secret handling, failure recovery, concurrent access
+2. **Integration tests (Phase 2):** Settings → DB → Welcome flow, auth method switching, health persistence, backward compatibility
+3. **System/acceptance tests (Phase 3):** Full pytest with coverage, ruff, mypy, manual dev and Postgres paths
+4. **Operational tests (Phase 4):** Data survives restart, Postgres path documented, no secret leakage
 
-## 2026-04-24 Issue #3 Final Review & Approval
-- Reviewed Judson's Streamlit import-path fix for issue #3
-- Verified fix quality:
-  * Minimal impact (4-line bootstrap, no restructuring)
-  * Idempotent (guards against double-insertion via conditional check)
-  * Meaningful regression coverage (subprocess tests simulate Streamlit-style loading)
-  * No test regressions (all existing tests still passing)
-- Fix is production-ready and approved
-- Issue #3 updated with final review status: APPROVED
-- Ready to close issue #3
+**Critical review gates defined:**
+- [ ] SQLAlchemy ORM abstraction only (no raw SQL)
+- [ ] grep -r "client_secret" app/storage/ returns nothing
+- [ ] Schema audit: correct PKs, constraints, no orphaned data
+- [ ] Transaction audit: all writes atomic
+- [ ] CI/CD audit: no external service deps
+- [ ] Error handling audit: all DB errors caught with user-friendly messages
 
-## 2026-04-24 Issue #4 Planning & Test Gates
-- Defined comprehensive acceptance criteria: auth behavior, UI/help text, test coverage, reviewer gates, headless fallback
-- Test gates documented: credential replacement, error handling/messages, UI/UX alignment, test coverage, headless environment fallback
-- Monitoring requirements: No device-code language in code, error messages use browser login wording, UI text clean, retry guidance present
+**Known risks & mitigations:**
+1. Streamlit session ↔ DB sync timing → lock mechanism or read-once-per-session
+2. SQLite vs Postgres behavior → SQLAlchemy + matrix tests
+3. Client secret leakage → validator wrapping, log filtering, fresh review
+4. Operator confusion (DB vs session) → clear UI labels, integration test proof
 
-## 2026-04-24 Issue #4 Final Review & Approval
-- Verified DeviceCodeCredential removed (no imports, no references)
-- Verified InteractiveBrowserCredential active (correct import, instantiation, constructor call)
-- Verified service-principal auth unchanged (ClientSecretCredential still used, tests passing)
-- Verified UI text clean (browser guidance present, device-code wording removed)
-- Verified error messages (browser login language, 'Run Test Connection again' guidance)
-- Verified test coverage: 92% auth.py coverage (exceeds 90% gate), all unit/integration tests passing, no regressions
-- Verified headless fallback: CredentialUnavailableError raised, graceful error handling, user guidance
-- Issue #4 APPROVED — production-ready
+**Role confirmation:**
+- Satya: review all phases, arbitrate conflicts
+- Kevin: Phase 1 implementation (storage layer)
+- Judson: Phase 2 implementation (UI persistence)
+- Scott: Phase 3 implementation (deployment, secrets plumbing)
+- Charlie: Phase 4 gating (acceptance criteria verification)
 
-## 2026-04-25 Issue #5 Planning & Test Gates
-- Defined comprehensive acceptance criteria: browser sign-in → token exchange success (no AADSTS7000218), settings page success state, error handling (cancelled browser, unavailable), regression coverage
-- Test gates: code review (public client ID, scope preservation, service principal untouched), test reviewer (>=90% coverage, unit/integration tests), integration reviewer (end-to-end Settings flow), code coverage >=90%
-- Test strategy: unit tests for public client ID & AADSTS7000218 avoidance, integration tests for callback success & error handling, regression tests for service principal unchanged
-- Implementation expectations: Kevin (public client ID constant & _build_credential update), optional frontend validation (no UI changes expected)
-
-## 2026-04-25 Issue #5 Final Review & Approval
-- Verified Azure CLI public client ID correctly defined and used for USER_IMPERSONATION path
-- Verified service-principal ClientSecretCredential path unchanged (regression-safe)
-- Verified scope derivation uses connection.client_id (token audience = ADME resource)
-- Verified test coverage: unit tests pass (public client ID, scope derivation, service principal unchanged, AADSTS7000218 handling), integration tests pass (callback success, error paths, regression), code coverage 93% (exceeds >=90%)
-- Verified end-to-end Settings workflow: browser auth succeeds, green validation summary, no device-code language in errors
-- Verified error handling: AADSTS7000218 eliminated, CredentialUnavailableError graceful, browser cancellation handled
-- No blockers identified. Issue #5 APPROVED — production-ready
-
-## 2026-04-25 Issue #6 Planning & Test Gates
-- Defined comprehensive acceptance criteria: (AC1) Interactive auth succeeds in IPS-Energy tenant with customer's app registration (no AADSTS700016), (AC2) scope hardcoded to https://energy.azure.com/.default, (AC3) service principal unchanged, (AC4) hardcoded app ID origin documented
-- Reviewer gates: (G1) no hardcoded app IDs without justification, (G2) scope correctly hardcoded and used, (G3) client ID strategy clear, (G4) tests cover new auth behavior, (G5) regression coverage (no device-code language, service principal preserved, settings unchanged, health check unchanged, error handling unchanged)
-- Expected test updates: scope assertions in 5+ test cases; new tests for client_id verification and hardcoded scope verification
-- Test execution plan: baseline → implement → update assertions → full test suite → manual smoke test → update issue
-- Risk assessment: High-risk areas (scope change, client ID migration) mitigated by testing; low-risk areas (service principal, error messages) unchanged
-
-## 2026-04-25 Issue #6 Final Review & Approval
-- Verified all 4 acceptance criteria met:
-  - AC1: Azure CLI public client ID removed; customer's app registration now used; no tenant-specific AADSTS700016 errors
-  - AC2: Scope hardcoded to https://energy.azure.com/.default (constant); no dynamic {client_id}/.default derivation
-  - AC3: Service principal auth unchanged; ClientSecretCredential logic preserved; only scope updated
-  - AC4: Code comment explains why hardcoded ID was removed; design/planning documents provide full rationale
-- Verified all 5 reviewer gates passed:
-  - G1: AZURE_CLI_PUBLIC_CLIENT_ID removed cleanly; no new hardcoded fallback IDs
-  - G2: Scope hardcoded in connection.py; verified in both interactive and service-principal paths; test assertions updated
-  - G3: Customer's client_id used for interactive auth; no fallback to Microsoft's public app; test coverage present
-  - G4: Unit tests updated (scope assertions, client_id verification); regression tests passing; 24/24 tests pass
-  - G5: Device-code language removed; service principal unchanged; health check unchanged; settings page unchanged; no regressions
-- Test execution: 24 pytest tests passing; ruff clean; mypy clean
-- Code quality: Clean diff; minimal changes; high readability
-- Risk assessment: High-risk areas mitigated; low-risk areas unchanged; no regression detected
-- Status: ✓ APPROVED FOR MERGE — production-ready
-
-## 2026-04-25 Issue #7 Planning & Test Gates
-- Defined comprehensive acceptance criteria: (AC1) Interactive auth uses explicit redirect_uri="http://localhost:8400", (AC2) Settings guidance explains new browser tab and return-to-Streamlit flow, (AC3) token acquisition unaffected, (AC4) multi-tenant behavior preserved, (AC5) session storage unaffected
-- Reviewer gates: (R1) redirect URI configuration verification, (R2) Settings guidance audit, (R3) test coverage for redirect behavior, (R4) multi-tenant compatibility validation, (R5) no regressions in service principal flow
-- Expected test updates: New assertions for redirect_uri parameter passing; Settings page guidance text assertions
-- Manual E2E validation: Browser tab behavior, multi-tenant testing, service health results rendering
-
-## 2026-04-25 Issue #7 Final Review & Approval
-- Verified all 5 reviewer gates APPROVED:
-  - R1: Code shows explicit redirect_uri="http://localhost:8400" in app/services/auth.py; constant makes intent clear; ClientSecretCredential unchanged
-  - R2: Settings page guidance updated with "new browser tab will open for sign-in. After you complete sign-in, close that tab and return here"; matches backend behavior; no localhost:8400 in user text
-  - R3: New unit tests verify redirect_uri parameter passed to credential; token acquisition still works; error messages clean; all 26 tests pass
-  - R4: tenant_id correctly passed to credential; redirect URI contains no tenant-specific values; session state isolation preserved
-  - R5: Service principal auth (ClientSecretCredential) unchanged; all service principal tests pass without modification; no new regressions
-- Manual E2E testing: Browser opens new tab for sign-in; Settings spinner displays during auth; service health results render automatically after tab close; multi-tenant testing shows no cross-tenant confusion
-- Test execution: 26 pytest tests passing; ruff clean; mypy clean
-- Code quality: Minimal impact; clear constant names; backward compatible
-- Risk assessment: All risks mitigated; no regressions detected
-- Status: ✓ APPROVED FOR MERGE — production-ready
-
-
-## Issue #8 Auth Flow - Team Completion (2026-05-05)
-
-**Status:** ✅ COMPLETE & VALIDATED
-
-All team members successfully completed assigned work for MSAL auth integration:
-- Satya: Lead review and final validation
-- Kevin: Auth-service implementation
-- Scott: Documentation and README updates
-- Judson: Settings page integration
-- Charlie: Quality gate and regression coverage
-
-Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
-## 2026-05-05: Manual Token Scope Configuration (Complete)
-
-**Status:** COMPLETE
-**Decision:** Manual token scope configuration merged to decisions.md
-**Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+**Ready to gate implementation:** All A1–A8 criteria and test suites committed to decisions.md. Team sign-off required before coding begins.
