@@ -81,3 +81,19 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+### 2026-05-05T09:55:00Z - Cross-agent: settings persistence available
+**From Scribe (team update):** Kevin shipped `app/services/settings_store.py`
+backed by stdlib SQLite at `~/.adme-ingestion-tool/settings.db` (override:
+`ADME_SETTINGS_DB`). `app.connection_state.ensure_session_defaults()` now
+hydrates from the active stored row, and `save_connection()` writes through
++ marks active. New helper: `forget_saved_connection()`.
+
+For the Settings page: the existing save flow already persists once
+`save_connection` delegation is in place — no new page-level wiring needed
+for the v1 single-slot UX. `client_secret` is intentionally NOT persisted;
+service-principal operators re-enter it per session. Auth material remains
+session-only and must NOT be written through this store.
+
+If/when a "Saved connections" picker is added, the store API already
+exposes `list_connections()` and `set_active_connection(name)` — no schema
+change required.

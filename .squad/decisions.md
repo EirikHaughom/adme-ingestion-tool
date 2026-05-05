@@ -614,3 +614,301 @@ APPROVE.
 
 Ready for coordinator merge handling. No further implementation changes required.
 
+
+---
+
+### 2026-05-05: Local persistence for ADME connection settings (SQLite)
+**By:** Satya
+
+## Decision
+
+Persist user-entered ADME connection settings (the control plane) to a local
+SQLite database via the Python stdlib `sqlite3` module. SQLite becomes the
+durable backing store; Streamlit `st.session_state` remains the per-rerun
+working copy and continues to own all auth/session-only material.
+
+## Why SQLite (and not pglite)
+
+- pglite is JS/WASM (Postgres compiled for the browser). The Streamlit app
+  runs Python on the server side; pglite cannot be embedded in that process
+  and adds a Node.js/WASM dependency that we will not own.
+- SQLite via `sqlite3` is stdlib — zero new runtime dependencies, no install
+  step, works under our current emulation/test environment, and gives us a
+  single-file database that is trivially git-ignored and trivially deleted
+  for a clean reset.
+- File-based persistence matches operator expectations for a desktop-style
+  control plane: settings survive across sessions for the same OS user, and
+  there is no separate service to start.
+
+## Storage location
+
+- Path: `~/.adme-ingestion-tool/settings.db` resolved via
+  `Path.home() / ".adme-ingestion-tool" / "settings.db"`.
+- Created lazily on first write; directory created with `mkdir(parents=True,
+  exist_ok=True)`.
+- Overridable via environment variable `ADME_SETTINGS_DB` for tests and
+  alternate installs (tests MUST use `tmp_path`, never the real home dir).
+- Why user profile (not repo): the database is per-operator state, not
+  product code. Storing it in the repo would (a) leak operator-specific
+  endpoints/tenant IDs through git, (b) collide between developers sharing
+  the checkout, and (c) be wiped by routine `git clean`. The user-profile
+  location is the same convention used by `az`, `gh`, `kubectl`, etc.
+- `.gitignore`: not required (the path is outside the repo), but add the
+  override path (`*.db` under `.adme-ingestion-tool/`) defensively if any
+  test fixture writes inside the workspace.
+
+## Schema — `connections` table
+
+```sql
+CREATE TABLE IF NOT EXISTS connections (
+    name              TEXT PRIMARY KEY,
+    endpoint          TEXT NOT NULL,
+    tenant_id         TEXT NOT NULL,
+    client_id         TEXT NOT NULL,
+    data_partition_id TEXT NOT NULL,
+    token_scope       TEXT NOT NULL DEFAULT 'https://energy.azure.com/.default',
+    auth_method       TEXT NOT NULL CHECK (auth_method IN
+                          ('user_impersonation', 'service_principal')),
+    is_active         INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_active
+    ON connections(is_active) WHERE is_active = 1;
+```
+
+### Schema decisions
+
+- **Primary key is `name` (operator-supplied label), not the endpoint.** An
+  operator may register the same ADME endpoint under different labels
+  (e.g. `prod`, `prod-readonly`) with different auth methods. `name` is the
+  stable human handle.
+- **No `id` surrogate key.** `name` is short, stable, and already unique.
+  Adding an integer PK buys nothing for a single-user local store.
+- **`client_secret` is NOT persisted.** Secrets at rest are explicitly out
+  of scope (see below). Service-principal connections will require the
+  operator to re-enter the secret per session until encryption-at-rest is
+  added. The Settings UI must communicate this clearly.
+- **No `token_scope` UNIQUE.** Scope is config that may legitimately vary
+  per saved connection.
+- **`is_active` partial unique index** enforces "at most one active
+  connection at a time" without needing a separate `active_connection`
+  table. Activating a new row sets others to 0 in the same transaction.
+- **Timestamps as ISO 8601 TEXT** (`datetime.now(UTC).isoformat()`).
+  SQLite has no native datetime; TEXT is portable and human-readable.
+- Field names mirror `app/models/connection.py` (`ADMEConnection`) so the
+  store/load mapping is mechanical.
+
+## API surface — `app/services/settings_store.py`
+
+Function signatures only; bodies are Kevin's work.
+
+```python
+"""Local SQLite-backed store for persisted ADME connection settings."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.models.connection import ADMEConnection
+
+
+DEFAULT_DB_PATH: Path  # = Path.home() / ".adme-ingestion-tool" / "settings.db"
+
+
+class SettingsStoreError(Exception):
+    """Raised when the local settings store cannot be read or written."""
+
+
+def get_db_path() -> Path: ...
+    """Return the resolved SQLite path, honoring ADME_SETTINGS_DB."""
+
+
+def initialize_store(db_path: Path | None = None) -> None: ...
+    """Create the DB file and schema if missing. Idempotent."""
+
+
+def list_connections(db_path: Path | None = None) -> list[tuple[str, ADMEConnection]]: ...
+    """Return saved (name, connection) pairs, ordered by name."""
+
+
+def load_connection(name: str, db_path: Path | None = None) -> ADMEConnection | None: ...
+    """Return the saved connection for name, or None if missing."""
+
+
+def save_connection(
+    name: str,
+    connection: ADMEConnection,
+    db_path: Path | None = None,
+) -> None: ...
+    """Insert or update a saved connection by name. client_secret is not persisted."""
+
+
+def delete_connection(name: str, db_path: Path | None = None) -> None: ...
+    """Remove a saved connection by name. No error if missing."""
+
+
+def get_active_connection_name(db_path: Path | None = None) -> str | None: ...
+    """Return the currently active connection name, or None if none active."""
+
+
+def set_active_connection(name: str, db_path: Path | None = None) -> None: ...
+    """Mark name as active and clear the active flag on all other rows.
+
+    Raises SettingsStoreError if name does not exist.
+    """
+
+
+def clear_active_connection(db_path: Path | None = None) -> None: ...
+    """Clear the active flag on all rows. Used on Sign Out / reset."""
+```
+
+### API design notes
+
+- `db_path` is a thin seam for tests (override with `tmp_path`) and the
+  `ADME_SETTINGS_DB` env var. Defaults to `get_db_path()`.
+- All functions open and close a short-lived `sqlite3` connection. No
+  module-global cursor; no Streamlit caching. Concurrency is single-user.
+- `save_connection()` MUST drop `client_secret` before INSERT/UPDATE.
+  Document this in the docstring; assert it in tests.
+- `set_active_connection()` and `save_connection(... is_active=True)` paths
+  must run inside `BEGIN IMMEDIATE` to keep the partial unique index honest
+  on activation switches.
+- Errors from `sqlite3` are re-raised as `SettingsStoreError` with
+  operator-safe messages. No raw connection strings or tokens in messages.
+
+## UI integration touchpoints
+
+### `app/connection_state.py`
+
+- `ensure_session_defaults(session_state)` — call
+  `settings_store.initialize_store()` once and, when `CONNECTION_KEY` is
+  absent from session state, hydrate it via
+  `load_connection(get_active_connection_name())`. Keep all existing keys.
+- `save_connection(session_state, connection)` — after updating session
+  state, call `settings_store.save_connection(name, connection)` and
+  `settings_store.set_active_connection(name)`. The function gains an
+  optional `name` argument; for the v1 single-connection UX, default to
+  the literal `"default"` label so existing call sites do not break.
+- `clear_user_auth_state(session_state)` — unchanged. Auth material is
+  session-only and is NOT written to SQLite.
+- New helper `forget_saved_connection(session_state, name)` that wraps
+  `settings_store.delete_connection` plus any session cleanup.
+
+### `app/pages/1_⚙️_Settings.py`
+
+- `_handle_form_action(...)` — when `save_clicked` succeeds, the existing
+  call to `save_connection(st.session_state, draft_connection)` already
+  becomes the persistence path once `connection_state.save_connection`
+  delegates to the store. No new code in the page for the v1 single-slot
+  flow beyond the success message ("Saved for this and future sessions.").
+- `_consume_oauth_callback_once()` — unchanged. Auth flow is session-only.
+- (Deferred to a follow-up issue: a "Saved connections" picker that lists
+  rows from `list_connections()` and lets the operator switch active. For
+  this scope we ship single-slot persistence keyed on the `"default"`
+  name.)
+
+### `app/main.py`
+
+- No changes required. `ensure_session_defaults()` already runs at the top
+  of `main()`, so hydration happens transparently.
+
+## Out of scope (deferred — explicit non-goals)
+
+- **Encryption of secrets at rest.** `client_secret` is NOT persisted in
+  v1. Operators re-enter it per session for service-principal auth.
+  A future issue can add OS-keychain integration (`keyring`) or a
+  passphrase-derived key.
+- **Multi-user / shared deployment support.** This store is single-user,
+  single-host. Not safe for shared filesystems.
+- **Migrations framework.** v1 ships one schema. Future schema changes
+  will be handled by an additive migration helper when we get there;
+  do not pull in Alembic for a single-table store.
+- **Connection picker UI / multiple saved profiles.** The API supports it
+  (`list_connections`, `set_active_connection`); the UI ships single-slot.
+- **Cross-process locking.** SQLite handles this; we do not add app-level
+  locks.
+- **Telemetry / audit log of edits.** Not in scope.
+
+## Work breakdown
+
+### Kevin (Backend)
+
+1. Add `app/services/settings_store.py` with the API above. Implement the
+   bodies. No new runtime deps; stdlib `sqlite3` + `pathlib` only.
+2. Implement `DEFAULT_DB_PATH`, `get_db_path()` env-var override, and
+   schema initialization (`CREATE TABLE IF NOT EXISTS` + partial index).
+3. Implement save/load/delete/list with the documented client_secret-drop
+   guarantee. Use `BEGIN IMMEDIATE` for activation transitions.
+4. Wire `app/connection_state.py`:
+   - hydrate session from active row in `ensure_session_defaults`;
+   - delegate `save_connection` to the store and set active;
+   - keep auth helpers untouched.
+5. Smoke-test locally with `streamlit run app/main.py`: enter a
+   connection, restart the app, confirm it reloads.
+6. No README changes — Scott will pick that up after the store lands.
+
+### Charlie (Tester)
+
+1. Add `tests/test_settings_store.py`:
+   - happy-path round-trip (save → load → list → delete);
+   - `client_secret` is dropped on save (load returns empty string);
+   - `set_active_connection` flips active correctly; partial unique
+     index allows zero or one active row;
+   - `get_active_connection_name` returns None on empty DB and the right
+     name after activation;
+   - `ADME_SETTINGS_DB` env-var override is honored;
+   - schema is idempotent (`initialize_store` called twice is a no-op);
+   - missing-name `delete_connection` is a no-op (no exception);
+   - `set_active_connection` on unknown name raises
+     `SettingsStoreError`;
+   - all tests use `tmp_path`; none touch the real home directory.
+2. Extend `tests/test_connection_state.py`:
+   - `ensure_session_defaults` hydrates `CONNECTION_KEY` from a stubbed
+     active row;
+   - `save_connection` writes through to the store (mock or fake store);
+   - changing the connection still clears auth and health state.
+3. Extend `tests/test_settings_page.py` minimally:
+   - asserting the existing save flow still passes after persistence
+     wiring (no new UI assertions needed for v1).
+4. Validation gates: full `pytest`, `ruff check app tests`,
+   `mypy app tests` all green before requesting review.
+
+### Sequencing
+
+- Kevin lands `settings_store.py` (steps 1–3) first. Charlie can write
+  the store-only tests in parallel against the published signatures.
+- Kevin then wires `connection_state.py` (step 4). Charlie's session-
+  state and page tests follow.
+- Satya reviews before merge; any change to the public function
+  signatures above requires lead sign-off.
+
+---
+
+### 2026-05-05: Autouse fixture isolates ADME_SETTINGS_DB for every test
+**By:** Charlie (Tester), requested by Mariel
+**What:** Added `_isolate_settings_db` autouse fixture in `tests/conftest.py`
+that sets `ADME_SETTINGS_DB` to `tmp_path/settings.db` for every test in the
+suite. Test code never falls through to `Path.home() / ".adme-ingestion-tool"
+/ "settings.db"`.
+**Why:** Two tests (`test_main_prompts_operator_to_open_settings_when_not_configured`
+and `test_settings_page_defaults_token_scope_to_adme_resource_scope`) passed
+in isolation but failed under the full suite because
+`ensure_session_defaults` hydrated from the operator's real on-disk settings
+DB. Per-test opt-in isolation (the existing `isolated_store` fixture) is
+fragile — any new test that forgets to request it re-opens the leak. Autouse
+is the only durable fix.
+**Scope:** Test infrastructure only. No production behavior changes.
+`app/services/settings_store.py` was untouched and needs no reset hook
+because it holds no module-level state — every call opens a short-lived
+`sqlite3` connection via `closing()`.
+**Result:** Full suite green: 105 passed.
+
+
+---
+
+
+---
+
+
