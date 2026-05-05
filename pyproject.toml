@@ -8,6 +8,7 @@ license = {text = "MIT"}
 dependencies = [
     "streamlit>=1.56.0",
     "azure-identity>=1.19.0",
+    "msal>=1.31.0",
     "requests>=2.32.0",
     "python-dotenv>=1.1.0",
 ]
@@ -26,6 +27,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/pages/1_⚙️_Settings.py" = ["N999"]
 
 [tool.mypy]
 python_version = "3.11"

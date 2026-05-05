@@ -1,0 +1,238 @@
+"""Utilities for storing ADME connection state in Streamlit session state."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
+
+from app.models.connection import ADMEConnection, AuthMethod, ServiceHealthResult
+
+if TYPE_CHECKING:
+    from app.services.auth import UserAuthFlowStart, UserAuthState
+
+SessionStateView = Any
+MutableSessionState = Any
+
+
+CONNECTION_KEY = "adme_connection"
+HEALTH_RESULTS_KEY = "adme_health_results"
+HEALTH_ERROR_KEY = "adme_health_error"
+USER_AUTH_FLOW_KEY = "adme_user_auth_flow"
+USER_AUTH_STATE_KEY = "adme_user_auth_state"
+OVERALL_STATE_LABELS = {
+    "not_configured": "Not configured",
+    "not_tested": "Configured · Validation pending",
+    "healthy": "Healthy",
+    "degraded": "Degraded",
+    "error": "Validation failed",
+}
+
+
+@dataclass(frozen=True)
+class HealthSummary:
+    """Summarize the latest ADME service validation run."""
+
+    total_services: int
+    healthy_services: int
+    unhealthy_services: int
+    error_services: int
+
+    @property
+    def overall_state(self) -> str:
+        """Return the aggregate state for the validation run."""
+        if self.total_services == 0:
+            return "not_tested"
+        if self.error_services:
+            return "error"
+        if self.unhealthy_services:
+            return "degraded"
+        return "healthy"
+
+
+def ensure_session_defaults(session_state: MutableSessionState) -> None:
+    """Ensure the expected ADME session keys are always present."""
+    session_state.setdefault(CONNECTION_KEY, None)
+    session_state.setdefault(HEALTH_RESULTS_KEY, [])
+    session_state.setdefault(HEALTH_ERROR_KEY, "")
+    session_state.setdefault(USER_AUTH_FLOW_KEY, None)
+    session_state.setdefault(USER_AUTH_STATE_KEY, None)
+
+
+def get_connection(session_state: SessionStateView) -> ADMEConnection | None:
+    """Return the stored connection, if one exists for this session."""
+    connection = session_state.get(CONNECTION_KEY)
+    if isinstance(connection, ADMEConnection):
+        return connection
+    return None
+
+
+def save_connection(
+    session_state: MutableSessionState,
+    connection: ADMEConnection,
+) -> None:
+    """Persist the connection for the active Streamlit session only."""
+    if get_connection(session_state) != connection:
+        clear_user_auth_state(session_state)
+    session_state[CONNECTION_KEY] = connection
+
+
+def get_pending_user_auth_flow(
+    session_state: SessionStateView,
+) -> UserAuthFlowStart | Mapping[str, object] | None:
+    """Return the pending MSAL user sign-in flow, if one is active."""
+    pending_flow = session_state.get(USER_AUTH_FLOW_KEY)
+    if pending_flow is None:
+        return None
+    return cast("UserAuthFlowStart | Mapping[str, object]", pending_flow)
+
+
+def store_pending_user_auth_flow(
+    session_state: MutableSessionState,
+    flow: UserAuthFlowStart | Mapping[str, object],
+) -> None:
+    """Store an opaque pending user sign-in flow for this Streamlit session."""
+    session_state[USER_AUTH_FLOW_KEY] = flow
+
+
+def clear_pending_user_auth_flow(session_state: MutableSessionState) -> None:
+    """Clear any pending user sign-in flow from the session."""
+    session_state[USER_AUTH_FLOW_KEY] = None
+
+
+def get_user_auth_state(session_state: SessionStateView) -> UserAuthState | None:
+    """Return completed user auth material for backend calls, if present."""
+    auth_state = session_state.get(USER_AUTH_STATE_KEY)
+    if auth_state is None:
+        return None
+    return cast("UserAuthState", auth_state)
+
+
+def store_user_auth_state(
+    session_state: MutableSessionState,
+    auth_state: UserAuthState,
+) -> None:
+    """Store completed user auth state and clear stale health results."""
+    if session_state.get(USER_AUTH_STATE_KEY) != auth_state:
+        clear_health_state(session_state)
+    session_state[USER_AUTH_STATE_KEY] = auth_state
+
+
+def clear_user_auth_state(session_state: MutableSessionState) -> None:
+    """Clear user auth state and any health tied to that signed-in identity."""
+    session_state[USER_AUTH_STATE_KEY] = None
+    clear_pending_user_auth_flow(session_state)
+    clear_health_state(session_state)
+
+
+def get_health_results(
+    session_state: SessionStateView,
+) -> list[ServiceHealthResult]:
+    """Return the latest stored health results for the session."""
+    results = session_state.get(HEALTH_RESULTS_KEY, [])
+    if not isinstance(results, list):
+        return []
+    return [
+        result for result in results if isinstance(result, ServiceHealthResult)
+    ]
+
+
+def get_health_error(session_state: SessionStateView) -> str:
+    """Return the latest validation error message for the session."""
+    error_message = session_state.get(HEALTH_ERROR_KEY, "")
+    if isinstance(error_message, str):
+        return error_message
+    return ""
+
+
+def clear_health_state(session_state: MutableSessionState) -> None:
+    """Clear previously stored health results and errors."""
+    session_state[HEALTH_RESULTS_KEY] = []
+    session_state[HEALTH_ERROR_KEY] = ""
+
+
+def store_health_results(
+    session_state: MutableSessionState,
+    results: Sequence[ServiceHealthResult],
+) -> None:
+    """Store fresh health results and clear the error banner."""
+    session_state[HEALTH_RESULTS_KEY] = list(results)
+    session_state[HEALTH_ERROR_KEY] = ""
+
+
+def store_health_error(
+    session_state: MutableSessionState,
+    error_message: str,
+) -> None:
+    """Store the latest validation error and clear stale result rows."""
+    session_state[HEALTH_RESULTS_KEY] = []
+    session_state[HEALTH_ERROR_KEY] = error_message
+
+
+def summarize_health(results: Sequence[ServiceHealthResult]) -> HealthSummary:
+    """Return aggregate counts for a service validation run."""
+    healthy_services = sum(result.status == "healthy" for result in results)
+    unhealthy_services = sum(result.status == "unhealthy" for result in results)
+    error_services = sum(result.status == "error" for result in results)
+    return HealthSummary(
+        total_services=len(results),
+        healthy_services=healthy_services,
+        unhealthy_services=unhealthy_services,
+        error_services=error_services,
+    )
+
+
+def get_overall_state(session_state: SessionStateView) -> str:
+    """Return the operator-facing connection state for the current session."""
+    connection = get_connection(session_state)
+    if connection is None or not connection.is_valid():
+        return "not_configured"
+    if get_health_error(session_state):
+        return "error"
+    results = get_health_results(session_state)
+    return summarize_health(results).overall_state
+
+
+def format_auth_method(method: AuthMethod) -> str:
+    """Return a human-friendly label for an auth method."""
+    if method == AuthMethod.SERVICE_PRINCIPAL:
+        return "Service principal"
+    return "User impersonation"
+
+
+def format_overall_state(state: str) -> str:
+    """Return a human-friendly label for the current connection state."""
+    return OVERALL_STATE_LABELS.get(state, state.replace("_", " ").title())
+
+
+def format_service_state(status: str) -> str:
+    """Return a concise status label for a service probe result."""
+    labels = {
+        "healthy": "✅ Healthy",
+        "unhealthy": "⚠️ Unhealthy",
+        "error": "❌ Error",
+        "unknown": "• Unknown",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+def results_to_table_rows(
+    results: Sequence[ServiceHealthResult],
+) -> list[dict[str, object]]:
+    """Convert health results into operator-friendly table rows."""
+    rows: list[dict[str, object]] = []
+    for result in results:
+        rows.append(
+            {
+                "Service": result.service_name,
+                "State": format_service_state(result.status),
+                "HTTP": result.status_code if result.status_code is not None else "—",
+                "Latency (ms)": (
+                    round(result.response_time_ms, 1)
+                    if result.response_time_ms is not None
+                    else "—"
+                ),
+                "Detail": result.error_message or "—",
+            }
+        )
+    return rows

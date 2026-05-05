@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+ADME_RESOURCE_SCOPE = "https://energy.azure.com/.default"
+
 
 class AuthMethod(StrEnum):
     """Supported authentication methods for ADME."""
@@ -25,8 +27,9 @@ class ADMEConnection:
     Attributes:
         endpoint: ADME instance URL, e.g. ``https://myinstance.energy.azure.com``.
         tenant_id: Azure AD / Entra ID tenant GUID.
-        client_id: App registration (client) ID used for the ADME resource scope.
+        client_id: App registration (client) ID used to authenticate with Entra ID.
         data_partition_id: OSDU data partition, e.g. ``myinstance-opendes``.
+        token_scope: OAuth scope requested when acquiring ADME access tokens.
         auth_method: How the operator authenticates.
         client_secret: Required only when *auth_method* is SERVICE_PRINCIPAL.
     """
@@ -35,13 +38,15 @@ class ADMEConnection:
     tenant_id: str
     client_id: str
     data_partition_id: str
+    token_scope: str = ADME_RESOURCE_SCOPE
     auth_method: AuthMethod = AuthMethod.USER_IMPERSONATION
     client_secret: str = ""
 
     @property
     def scope(self) -> str:
-        """OAuth 2.0 scope derived from the ADME client ID."""
-        return f"{self.client_id}/.default"
+        """OAuth 2.0 scope requested for ADME tokens."""
+        configured_scope = self.token_scope.strip()
+        return configured_scope or ADME_RESOURCE_SCOPE
 
     def is_valid(self) -> bool:
         """Return True when all required fields are populated."""
@@ -88,6 +93,7 @@ OSDU_SERVICES: list[tuple[str, str, str]] = [
     ("Workflow", "/api/workflow/v1/workflow", "GET"),
     ("File", "/api/file/v2/getFileList", "GET"),
     ("Dataset", "/api/dataset/v1/getDatasetRegistry", "GET"),
-    ("Indexer", "/api/indexer/v2/reindex", "GET"),
+    ("Indexer", "/api/indexer/v2/readiness_check", "GET"),
     ("Notification", "/api/notification/v1/info", "GET"),
+    ("EDS", "/api/eds/v1/health/readiness_check", "GET"),
 ]

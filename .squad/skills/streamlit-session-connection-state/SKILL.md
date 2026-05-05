@@ -17,6 +17,7 @@ Use this pattern when a Streamlit app collects connection details on one page an
 - Consume OAuth callback query params once, exchange only when a pending flow exists, and clear query params in a `finally` path to prevent rerun replay.
 - In callback-failure tests, distinguish the stale pending flow from any newly generated retry flow; assert the old flow is not reused after missing-pending, denial, state-mismatch, or token-exchange failures.
 - Clear stale health whenever completed user auth state changes so service validation never reflects a prior signed-in identity.
+- Treat non-secret auth configuration changes, including token scope, as connection changes so pending user auth, completed user auth, and stale health are cleared before validation.
 - Convert dataclass results into plain table rows before rendering to keep the UI layer simple and testable.
 - When a session is unconfigured or unvalidated, show the next step immediately with a direct Settings page link.
 

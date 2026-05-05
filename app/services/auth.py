@@ -1,0 +1,362 @@
+"""Authentication helpers for Azure Data Manager for Energy connections."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Protocol, cast
+
+import msal  # type: ignore[import-untyped]
+from azure.core.exceptions import AzureError, ClientAuthenticationError
+from azure.identity import (
+    ClientSecretCredential,
+    CredentialUnavailableError,
+)
+
+from app.models.connection import ADMEConnection, AuthMethod
+
+USER_AUTH_REDIRECT_URI = "http://localhost:8501"
+MSAL_AUTHORITY_TEMPLATE = "https://login.microsoftonline.com/{tenant_id}"
+_TOKEN_EXPIRY_SKEW_SECONDS = 60
+
+
+class _MsalPublicClient(Protocol):
+    def initiate_auth_code_flow(
+        self,
+        scopes: list[str],
+        redirect_uri: str,
+    ) -> dict[str, object]:
+        ...
+
+    def acquire_token_by_auth_code_flow(
+        self,
+        auth_code_flow: dict[str, object],
+        auth_response: Mapping[str, str],
+    ) -> dict[str, object]:
+        ...
+
+
+@dataclass(frozen=True)
+class UserAuthFlowStart:
+    """MSAL user sign-in start result.
+
+    The flow payload is intentionally opaque and hidden from repr because it
+    contains PKCE/state material that must stay in Streamlit session state only.
+    """
+
+    authorization_url: str = field(repr=False)
+    flow: Mapping[str, object] = field(repr=False)
+
+    @property
+    def auth_url(self) -> str:
+        """Compatibility alias for UI callers that prefer a shorter name."""
+        return self.authorization_url
+
+
+@dataclass(frozen=True)
+class UserAuthState:
+    """Session-scoped user auth material for ADME requests."""
+
+    access_token: str = field(repr=False)
+    expires_at: int | None = None
+
+    def is_expired(self) -> bool:
+        """Return True when the token is at or near expiry."""
+        if self.expires_at is None:
+            return False
+        return self.expires_at <= int(time.time()) + _TOKEN_EXPIRY_SKEW_SECONDS
+
+
+class AuthenticationError(RuntimeError):
+    """Raised when an ADME access token cannot be acquired."""
+
+
+def start_user_auth_flow(connection: ADMEConnection) -> UserAuthFlowStart:
+    """Start an app-managed MSAL authorization-code + PKCE user flow."""
+    _validate_connection(connection)
+    auth_method = _normalize_auth_method(connection)
+    if auth_method != AuthMethod.USER_IMPERSONATION:
+        raise AuthenticationError(
+            "User sign-in flow can only be started for user impersonation "
+            "connections."
+        )
+
+    app = _build_msal_app(connection)
+    try:
+        flow = app.initiate_auth_code_flow(
+            scopes=[connection.scope],
+            redirect_uri=USER_AUTH_REDIRECT_URI,
+        )
+    except ValueError:
+        raise AuthenticationError(
+            "Unable to start user sign-in. Check tenant ID, client ID, and "
+            "redirect URI configuration."
+        ) from None
+    if "error" in flow:
+        raise AuthenticationError(
+            _format_msal_error("Unable to start user sign-in", flow)
+        )
+
+    authorization_url = flow.get("auth_uri")
+    if not isinstance(authorization_url, str) or not authorization_url:
+        raise AuthenticationError(
+            "MSAL did not return an authorization URL. Start sign-in again."
+        )
+
+    return UserAuthFlowStart(authorization_url=authorization_url, flow=flow)
+
+
+def complete_user_auth_flow(
+    connection: ADMEConnection,
+    flow: Mapping[str, object] | UserAuthFlowStart,
+    callback_params: Mapping[str, object],
+) -> UserAuthState:
+    """Complete an MSAL authorization-code + PKCE flow from callback params."""
+    _validate_connection(connection)
+    auth_method = _normalize_auth_method(connection)
+    if auth_method != AuthMethod.USER_IMPERSONATION:
+        raise AuthenticationError(
+            "User sign-in flow can only be completed for user impersonation "
+            "connections."
+        )
+
+    pending_flow = _extract_pending_flow(flow)
+    normalized_callback_params = _normalize_callback_params(callback_params)
+
+    if "error" in normalized_callback_params:
+        raise AuthenticationError(
+            _format_oauth_callback_error(normalized_callback_params)
+        )
+    if "state" not in normalized_callback_params:
+        raise AuthenticationError(
+            "User sign-in callback is missing state. Start sign-in again."
+        )
+    if "code" not in normalized_callback_params:
+        raise AuthenticationError(
+            "User sign-in callback is missing an authorization code. "
+            "Start sign-in again."
+        )
+
+    app = _build_msal_app(connection)
+    try:
+        result = app.acquire_token_by_auth_code_flow(
+            auth_code_flow=dict(pending_flow),
+            auth_response=normalized_callback_params,
+        )
+    except ValueError:
+        raise AuthenticationError(
+            "User sign-in callback did not match the pending authentication "
+            "flow. Start sign-in again."
+        ) from None
+
+    return _user_auth_state_from_msal_result(result)
+
+
+def get_token(
+    connection: ADMEConnection,
+    user_auth_state: UserAuthState | None = None,
+) -> str:
+    """Acquire and return an OAuth access token for the given connection."""
+    _validate_connection(connection)
+
+    auth_method = _normalize_auth_method(connection)
+    if auth_method == AuthMethod.USER_IMPERSONATION:
+        return _get_user_impersonation_token(user_auth_state)
+
+    credential: ClientSecretCredential | None = None
+    try:
+        credential = _build_service_principal_credential(connection)
+        access_token = credential.get_token(connection.scope)
+    except CredentialUnavailableError as exc:
+        raise AuthenticationError(
+            _format_service_principal_error(
+                auth_method,
+                "credential is unavailable",
+                exc,
+            )
+        ) from exc
+    except ClientAuthenticationError as exc:
+        raise AuthenticationError(
+            _format_service_principal_error(
+                auth_method,
+                "authentication failed",
+                exc,
+            )
+        ) from exc
+    except AzureError as exc:
+        raise AuthenticationError(
+            _format_service_principal_error(
+                auth_method,
+                "token acquisition failed",
+                exc,
+            )
+        ) from exc
+    finally:
+        _close_credential(credential)
+
+    if not access_token.token:
+        raise AuthenticationError("Azure AD returned an empty access token.")
+
+    return access_token.token
+
+
+def _build_msal_app(connection: ADMEConnection) -> _MsalPublicClient:
+    try:
+        return cast(
+            _MsalPublicClient,
+            msal.PublicClientApplication(
+                client_id=connection.client_id,
+                authority=MSAL_AUTHORITY_TEMPLATE.format(
+                    tenant_id=connection.tenant_id
+                ),
+            ),
+        )
+    except ValueError:
+        raise AuthenticationError(
+            "MSAL public client could not be initialized. Check tenant ID and "
+            "client ID."
+        ) from None
+
+
+def _build_service_principal_credential(
+    connection: ADMEConnection,
+) -> ClientSecretCredential:
+    return ClientSecretCredential(
+        tenant_id=connection.tenant_id,
+        client_id=connection.client_id,
+        client_secret=connection.client_secret,
+    )
+
+
+def _validate_connection(connection: ADMEConnection) -> None:
+    if not connection.is_valid():
+        raise ValueError(
+            "ADME connection is incomplete. Endpoint, tenant ID, client ID, and "
+            "data partition ID are required. Service principal auth also requires "
+            "a client secret."
+        )
+
+
+def _normalize_auth_method(connection: ADMEConnection) -> AuthMethod:
+    try:
+        return AuthMethod(connection.auth_method)
+    except ValueError as exc:
+        raise AuthenticationError(
+            f"Unsupported authentication method: {connection.auth_method!r}."
+        ) from exc
+
+
+def _format_service_principal_error(
+    auth_method: AuthMethod,
+    failure: str,
+    exc: Exception,
+) -> str:
+    return f"{auth_method.value} {failure}: {exc}"
+
+
+def _get_user_impersonation_token(user_auth_state: UserAuthState | None) -> str:
+    if user_auth_state is None:
+        raise AuthenticationError(
+            "User sign-in is required before requesting an ADME access token. "
+            "Start Sign In and complete the browser callback."
+        )
+    if user_auth_state.is_expired():
+        raise AuthenticationError("User sign-in has expired. Sign in again.")
+    if not user_auth_state.access_token:
+        raise AuthenticationError(
+            "User sign-in state does not contain an access token. Sign in again."
+        )
+
+    return user_auth_state.access_token
+
+
+def _extract_pending_flow(
+    flow: Mapping[str, object] | UserAuthFlowStart,
+) -> Mapping[str, object]:
+    if isinstance(flow, UserAuthFlowStart):
+        return flow.flow
+    if not flow:
+        raise AuthenticationError("Missing pending user sign-in flow. Sign in again.")
+    return flow
+
+
+def _normalize_callback_params(callback_params: Mapping[str, object]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in callback_params.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            normalized[key] = value
+            continue
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            (bytes, bytearray),
+        ):
+            if not value:
+                continue
+            normalized[key] = str(value[0])
+            continue
+        normalized[key] = str(value)
+    return normalized
+
+
+def _user_auth_state_from_msal_result(result: Mapping[str, object]) -> UserAuthState:
+    if "error" in result:
+        raise AuthenticationError(
+            _format_msal_error("User sign-in token exchange failed", result)
+        )
+
+    access_token = result.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise AuthenticationError(
+            "User sign-in token exchange completed without an access token. "
+            "Sign in again."
+        )
+
+    return UserAuthState(
+        access_token=access_token,
+        expires_at=_expires_at(result.get("expires_in")),
+    )
+
+
+def _expires_at(expires_in: object) -> int | None:
+    if isinstance(expires_in, bool):
+        return None
+    if isinstance(expires_in, int | float):
+        seconds = int(expires_in)
+    elif isinstance(expires_in, str) and expires_in.isdecimal():
+        seconds = int(expires_in)
+    else:
+        return None
+
+    return int(time.time()) + seconds
+
+
+def _format_oauth_callback_error(callback_params: Mapping[str, str]) -> str:
+    error_code = _safe_error_code(callback_params.get("error"))
+    return f"User sign-in failed ({error_code}). Start sign-in again."
+
+
+def _format_msal_error(prefix: str, result: Mapping[str, object]) -> str:
+    error_code = _safe_error_code(result.get("error"))
+    return f"{prefix} ({error_code}). Start sign-in again."
+
+
+def _safe_error_code(value: object) -> str:
+    if not isinstance(value, str):
+        return "unknown_error"
+    allowed = {"_", "-", "."}
+    sanitized = "".join(
+        character for character in value if character.isalnum() or character in allowed
+    )
+    return sanitized or "unknown_error"
+
+
+def _close_credential(credential: ClientSecretCredential | None) -> None:
+    if credential is None:
+        return
+
+    close_credential = getattr(credential, "close", None)
+    if callable(close_credential):
+        close_credential()

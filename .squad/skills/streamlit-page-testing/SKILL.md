@@ -18,6 +18,7 @@ Use this skill when testing Streamlit modules in this repo, especially page rend
 - Assert conditional field presence and absence when auth method or workflow state changes.
 - For secret-bearing inputs, assert the widget uses `type="password"` and that the non-secret auth path does not render the field at all.
 - Guard the issue or contract field set directly in tests so UI changes do not quietly add extra required inputs.
+- For non-secret configuration fields that operators could confuse with credentials (for example token scope), assert the in-page help or caption says it is not a token or secret and explains when to override it. README-only safety wording is not enough.
 
 ## Examples
 - `tests\support\streamlit_recorder.py`
