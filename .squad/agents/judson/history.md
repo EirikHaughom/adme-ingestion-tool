@@ -97,3 +97,19 @@ session-only and must NOT be written through this store.
 If/when a "Saved connections" picker is added, the store API already
 exposes `list_connections()` and `set_active_connection(name)` — no schema
 change required.
+
+## 2026-05-05 Entitlements page implementation (Mariel)
+- Built `app/pages/2_🔑_Entitlements.py` against Kevin's actual `app/services/entitlements.py` contract (members.self label + literal /me path), not Satya's earlier sketch. Logged the divergence to `.squad/decisions/inbox/judson-entitlements-mismatch.md` per Mariel's instruction.
+- Page session keys (page-scoped, no connection_state changes): `entitlements_history` (append-only list of dicts), `entitlements_autorun_done` (bool guard), `entitlements_last_member` and `entitlements_last_groups` (last EntitlementsCallResult so reruns triggered by clear-history don't blank the cards).
+- Auto-run-once: `should_run = rerun_clicked or not session_state[AUTORUN_KEY]`. Re-run button bypasses the guard; we set the guard True after the first successful run so subsequent Streamlit reruns (e.g., clear-history button click) do NOT re-fire calls. Re-run does NOT clear history — it appends two more entries (one per endpoint).
+- Pre-flight guard: render st.info + st.page_link to Settings when the connection is missing/invalid, OR when auth_method=USER_IMPERSONATION and no user_auth_state is present. Service-principal connections proceed straight to `get_token(connection)`.
+- Token acquisition mirrors Settings page's `_get_token_for_connection` exactly. AuthenticationError and bare Exception both degrade to a friendly error + Settings link; no raw library errors leak.
+- Latency chart uses `df.pivot_table(index=timestamp, columns=endpoint, values=latency_ms, aggfunc='last')` so st.line_chart renders one colored line per endpoint without manually reshaping. History table is reversed (newest first), capped at 20 rows, with latency formatted to 1 decimal.
+- Groups table is defensive: extracts `data["groups"]` only when it's a list of dicts; projects each group to (name, email, description) with `""` fallback for missing fields. Empty groups list shows a caption, not an error.
+- Identity label probes `email`, `desId`, `memberEmail`, `name`, `userPrincipalName` in order — ADME's `/members/me` typically returns `desId` not `email`.
+- Error block renders message + status (or 'no HTTP response') + correlation ID (or 'no correlation ID') + expander with raw_response (st.code for text bodies, st.json for dicts). Treats both `error_message=None` and `error_message=""` as success-path defensively.
+- Clear-history button ALSO clears `entitlements_last_member` and `entitlements_last_groups` so the cards reset to 'Run the entitlements test to see results.' caption — keeps page state coherent.
+- Updated `app/main.py` with a second st.page_link for the new Entitlements page (icon='🔑').
+- Added `"app/pages/2_🔑_Entitlements.py" = ["N999"]` to ruff per-file-ignores in pyproject.toml (matches the existing Settings exemption — Streamlit page filenames intentionally include emoji and digit prefixes).
+- pandas import needed `# type: ignore[import-untyped]` (no pandas-stubs installed; matches the requests pattern). ruff and mypy both clean.
+- Did NOT touch tests (Charlie owns), did NOT modify Kevin's service, did NOT modify connection_state.py (Mariel's spec is page-scoped state only — Satya's wiring of clear_entitlements_history into connection_state hooks is deferred since Mariel's binding UX rules don't require it).

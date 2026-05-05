@@ -127,3 +127,13 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 ### Counts
 - Targeted suite (settings_store + keyring + connection_state): 45 passed.
 - Full suite: 115 passed (was 105; +10 new keyring tests).
+## 2026-05-05 Entitlements service implementation (Mariel)
+- Added EntitlementsCallResult (frozen dataclass) to app/models/connection.py alongside ServiceHealthResult; updated module docstring to mention entitlements as a co-tenant of the UI/backend contract.
+- Created app/services/entitlements.py with fetch_member_self + fetch_groups, mirroring health.py: stdlib + requests, ENTITLEMENTS_TIMEOUT_SECONDS=5, allow_redirects=False, perf_counter latency rounded to 2dp, no internal retries.
+- Both fetchers route through _call_entitlements which validates connection.is_valid() and a non-empty token (ValueError, matching health.check_all), strips trailing slash from connection.endpoint, sends Authorization + data-partition-id + Accept: application/json.
+- Followed Mariel's task verbatim where it diverged from Satya's spec: members.self path is /api/entitlements/v2/members/me (not literal {me}); endpoint label is members.self (not members/{me}). The /members/me form matches the actual ADME entitlements contract.
+- Correlation ID extraction: case-insensitive lookup over correlation-id, x-correlation-id, request-id, x-request-id; first hit wins; built a lowercase mapping rather than relying on requests' CaseInsensitiveDict so any mapping-like headers object works.
+- Success path (2xx): parsed JSON dict goes into both data and raw_response. Non-dict JSON bodies degrade data to None but the call is still ok=True (defensive — entitlements always returns objects in practice).
+- Error path (non-2xx): error_message picks message/detail/error/title/errors fields shape-tolerantly and truncates to 500 chars; raw_response is parsed JSON if available, else raw text, else None.
+- Timeout returns ok=False, http_status=None, error_message='Request timed out after 5s'. Other RequestException returns 'TypeName: msg'. Defensive bare-Exception branch added for safety (pragma: no cover).
+- ruff and mypy both clean. No new dependencies. Did NOT touch tests (Charlie owns) or any page (Judson owns).

@@ -912,3 +912,319 @@ because it holds no module-level state — every call opens a short-lived
 ---
 
 
+
+
+### 2026-05-05: Entitlements smoke-test page architecture
+**By:** Satya (via Copilot)
+**Requested by:** Mariel
+
+## Decision
+
+Add a dedicated Streamlit page that exercises the ADME Entitlements API as
+the operator's "did I configure this correctly?" smoke test. This is a
+distinct surface from the OSDU service health probe — health asks "is the
+service up", entitlements asks "does my token actually work as me".
+
+The work is partitioned cleanly between Kevin (service module + result
+model), Judson (page + chart + UX), and Charlie (tests). Mariel's UX
+answers are binding and reproduced in the contract below.
+
+## File layout (confirmed)
+
+- **New service module:** `app/services/entitlements.py`
+- **New page:** `app/pages/2_🔑_Entitlements.py` (emoji prefix matches the
+  `1_⚙️_Settings.py` convention so Streamlit's auto-discovered page nav
+  stays consistent)
+- **Result model lives in:** `app/models/connection.py`, alongside
+  `ServiceHealthResult`
+- **New tests:** `tests/test_entitlements_service.py` and
+  `tests/test_entitlements_page.py`
+
+### Why `EntitlementsCallResult` lives in `app/models/connection.py`
+
+The `app/models/connection.py` docstring already describes itself as the
+"shared contract between the UI layer (Judson) and the backend services
+(Kevin)", and it already hosts `ServiceHealthResult` for the same
+service-result-shape reason. Splitting service result dataclasses into
+parallel files (`models/health.py`, `models/entitlements.py`, ...) would
+fragment that contract for no benefit at this size. Revisit if the
+connection module exceeds ~300 LOC or if entitlements grows its own data
+types beyond a result envelope.
+
+## Service contract — `app/services/entitlements.py`
+
+Mirrors `app/services/health.py`: stdlib + `requests`, ~5 s timeout, no
+retries inside the service (the UI's "Re-run test" button is the retry
+control). Both functions are independent — Judson may call them
+sequentially or concurrently; the service does not assume either order.
+
+```python
+PROBE_TIMEOUT_SECONDS = 5
+MEMBERS_SELF_PATH = "/api/entitlements/v2/members/{me}"  # literal {me} per ADME contract
+GROUPS_PATH = "/api/entitlements/v2/groups"
+
+def fetch_member_self(
+    connection: ADMEConnection,
+    token: str,
+) -> EntitlementsCallResult: ...
+
+def fetch_groups(
+    connection: ADMEConnection,
+    token: str,
+) -> EntitlementsCallResult: ...
+```
+
+Both functions:
+
+- Validate `connection.is_valid()` and that `token` is non-empty (raise
+  `ValueError` on misuse, matching `health.check_all`).
+- Build `Authorization: Bearer {token}` and
+  `data-partition-id: {connection.data_partition_id}` headers.
+- Use `requests.get(...)` with `timeout=PROBE_TIMEOUT_SECONDS` and
+  `allow_redirects=False`.
+- Time the call with `time.perf_counter()` and report `latency_ms` rounded
+  to 2 decimals (same idiom as `health._elapsed_ms`).
+- Treat `200 <= status < 300` as success; on success, parse the JSON body
+  into `data`. On non-2xx, build a friendly message using the same
+  shape-tolerant pattern as `health._build_http_error_message` and store
+  the raw body in `raw_response`.
+- On `requests.Timeout` and `requests.RequestException`, return
+  `ok=False`, `http_status=None`, an `error_message` from the exception,
+  `correlation_id=None`, and `raw_response=None`.
+- Catch only `requests.RequestException` and `ValueError` (JSON parse) at
+  the boundary. Do not silence broader exceptions.
+
+### `EntitlementsCallResult` shape
+
+```python
+@dataclass
+class EntitlementsCallResult:
+    """Outcome of a single ADME Entitlements API call."""
+
+    endpoint: str            # logical label, e.g. "members/{me}" or "groups"
+    path: str                # API path actually called
+    ok: bool
+    http_status: int | None
+    latency_ms: float
+    correlation_id: str | None
+    error_message: str       # "" on success, friendly message on failure
+    raw_response: dict | str | None  # parsed JSON if available, else raw text, else None
+    data: dict | None        # parsed payload only when ok is True
+```
+
+Conventions match `ServiceHealthResult`: `error_message` defaults to
+empty string (not None) on success; `latency_ms` is always populated
+(never None) so the in-session chart never has to handle holes.
+
+### Correlation ID extraction
+
+ADME Entitlements returns the correlation identifier on the response
+header. The service performs a **case-insensitive lookup** because
+`requests.Response.headers` is a `CaseInsensitiveDict` but operators may
+configure proxies that re-emit headers in different casing. Probe in
+order and take the first hit:
+
+1. `correlation-id`
+2. `x-correlation-id`
+3. `request-id`
+4. `x-request-id`
+
+If none are present, `correlation_id` is `None`. Surface whichever value
+is found verbatim — do not normalize, lowercase, or wrap.
+
+## Page contract — `app/pages/2_🔑_Entitlements.py`
+
+UX (binding from Mariel):
+
+- **Auto-run-once on load if a token exists.** Use a session-state guard
+  (`st.session_state["entitlements_autorun_done"]`) so that a Streamlit
+  rerun does not re-fire the calls. The "Re-run test" button explicitly
+  bypasses the guard and calls both endpoints again.
+- **Both endpoints called per run.** `fetch_member_self` first (so the
+  "who am I" banner renders even if the groups call fails), then
+  `fetch_groups`.
+- **Status banner:** ✅ green when both calls return `ok=True`; ❌ red
+  otherwise. Failure banner shows: friendly message, HTTP status,
+  correlation/request ID (if any), and an expander with `raw_response`.
+- **Groups display:** primary view is a `st.dataframe` table built from
+  `data["groups"]` (typical ADME shape: list of `{name, description,
+  email}` objects). Tolerate a missing `groups` key by showing an empty
+  table plus an info caption.
+- **Raw JSON expander:** one expander per endpoint, rendered with
+  `st.json(result.raw_response or result.data)`.
+- **No data-partition override.** Use `connection.data_partition_id`
+  from the saved connection. There is no per-page override field. The
+  page renders the partition value as a read-only caption so operators
+  can see what was used.
+- **No token re-prompt.** If `get_user_auth_state()` is None (user
+  impersonation) AND the connection is not service-principal, render a
+  friendly banner "No token available — configure on the Settings page"
+  with a `st.page_link` to `pages/1_⚙️_Settings.py`. Do **not** call
+  `start_user_auth_flow` from this page.
+- **Token acquisition:** for service-principal connections, call
+  `get_token(connection)`. For user impersonation, call
+  `get_token(connection, user_auth_state=...)` using the existing session
+  state helper. Wrap in `try/except AuthenticationError` and degrade to
+  the friendly "configure on Settings" banner with the auth error
+  message attached.
+
+### Latency / retry chart — in-session history
+
+History is a Streamlit-session-scoped list of dict entries (chosen over
+tuples so future fields don't require a positional rewrite). It is
+**append-only within a session** and is cleared whenever the connection,
+auth method, or token scope changes — Judson should reuse the existing
+`clear_*` hooks in `connection_state` and add a peer
+`clear_entitlements_history` invoked from the same code paths that
+already clear health state.
+
+```python
+st.session_state["entitlements_history"]: list[dict] = [
+    {
+        "timestamp": "2026-05-05T10:30:00Z",  # ISO 8601 UTC
+        "endpoint": "members/{me}" | "groups",
+        "latency_ms": float,
+        "http_status": int | None,
+        "ok": bool,
+    },
+    ...
+]
+```
+
+Render with `st.line_chart` keyed on `timestamp` with `latency_ms` as
+the value column, grouped by `endpoint`. `altair` is acceptable if
+Judson wants per-endpoint coloring without reshaping; we already pull
+in only Streamlit's bundled deps so prefer `st.line_chart` first. Below
+the chart, a small `st.dataframe` shows the last ~10 entries with
+status badge, latency, and correlation ID for quick diagnosis.
+
+### Auth integration
+
+- Read connection via `get_connection(st.session_state)`.
+- Read token (if any) via the same helpers `1_⚙️_Settings.py` already
+  uses. The page does **not** import `start_user_auth_flow` or
+  `complete_user_auth_flow`. Settings remains the only owner of the OAuth
+  callback dance (per the issue #8 decision).
+
+## Out of scope (explicit)
+
+The following are deferred and must not creep into this page or
+service in v1:
+
+- Pagination of groups beyond the API's default page (no `cursor`,
+  `limit`, "load more" UI).
+- Group filtering UI (search box, role-based filter, regex).
+- Group membership management (add/remove members, delete groups,
+  rename groups). This page is **read-only**.
+- Caching of entitlements results across reruns. Each run hits the API
+  fresh; the in-session chart is the only persisted artifact.
+- Cross-tenant impersonation or alternate `data-partition-id` overrides.
+
+## Work breakdown
+
+- **Kevin** — `app/services/entitlements.py` (both functions, the
+  shape-tolerant error message helper mirroring `health._build_http_error_message`,
+  correlation-ID extraction) and the `EntitlementsCallResult` dataclass
+  added to `app/models/connection.py`. Update the module docstring to
+  mention entitlements as a co-tenant of the contract. Keep the public
+  surface to the two `fetch_*` functions plus the dataclass.
+
+- **Judson** — `app/pages/2_🔑_Entitlements.py` end-to-end: auto-run-once
+  guard, "Re-run test" button, status banner, both raw-JSON expanders,
+  groups dataframe, latency line chart, last-N history table, the
+  no-token friendly banner, and `clear_entitlements_history` wiring into
+  the existing connection/auth-change handlers in `connection_state`.
+
+- **Charlie** — service tests against mocked `requests` responses
+  covering: 2xx success on both endpoints, non-2xx with JSON error body,
+  non-2xx with text body, timeout, network error, correlation-ID
+  extraction across all four header casings, and missing-correlation
+  fallback. Page smoke test using the existing `tests/support/streamlit_recorder.py`
+  pattern: renders the no-token banner when token is absent, renders the
+  status banner and history append on a successful mocked run, and does
+  not double-fire the auto-run on a Streamlit rerun.
+
+## Sequencing
+
+- Kevin lands `entitlements.py` and the `EntitlementsCallResult`
+  addition first so the public signatures are frozen. Judson can scaffold
+  the page in parallel against those signatures but must not merge
+  before Kevin's contract is in.
+- Charlie's service tests can land alongside Kevin. Page tests follow
+  Judson.
+- No Scott work this round; no infra, no new dependencies. All required
+  packages (`requests`, `streamlit`) are already declared.
+
+## Acceptance criteria
+
+- `app/services/entitlements.py` exposes `fetch_member_self` and
+  `fetch_groups` matching the signatures above.
+- `EntitlementsCallResult` exists in `app/models/connection.py` with the
+  documented fields and defaults.
+- `app/pages/2_🔑_Entitlements.py` auto-runs once when a token exists,
+  re-runs on demand, never auto-runs twice across reruns, and never
+  re-prompts for sign-in.
+- Correlation ID is extracted case-insensitively from the four header
+  names listed above.
+- In-session history is cleared when the connection, auth method, or
+  token scope changes, using the same hook points as health state.
+- Pagination, filtering, and membership management are absent from both
+  the service and the page.
+- Targeted tests pass: `tests/test_entitlements_service.py` and
+  `tests/test_entitlements_page.py`. Full suite stays green. Ruff and
+  mypy stay clean.
+
+---
+
+### 2026-05-05: Entitlements service contract diverges from Satya's spec
+**By:** Judson
+**Requested by:** Mariel
+
+## What
+
+While building `app/pages/2_🔑_Entitlements.py` against Kevin's
+`app/services/entitlements.py`, I noticed two small divergences from the
+contract Satya wrote in `satya-entitlements-page.md`. Per Mariel's task
+direction ("do NOT modify Kevin's service... proceed using his contract"),
+I built the page against Kevin's actual surface and am logging the deltas
+here so Satya/Charlie can rule on them after the fact.
+
+## Divergences
+
+1. **`MEMBERS_SELF_PATH`** — Satya: `"/api/entitlements/v2/members/{me}"`
+   (literal `{me}`). Kevin: `"/api/entitlements/v2/members/me"` (literal
+   `me`). Kevin's path matches the actual ADME entitlements REST contract
+   in production; the OSDU spec uses `me` as a literal segment, not a
+   parameter placeholder. Kevin's choice is correct; Satya's note read
+   the OSDU OpenAPI definition too literally.
+
+2. **Endpoint label** — Satya: `"members/{me}"`. Kevin:
+   `"members.self"`. The `.self` form is friendlier for chart legends
+   (no curly braces, easy to read) and avoids ambiguity if/when ADME
+   adds a true `/members/{id}` endpoint. The page uses Kevin's labels
+   verbatim in the latency chart.
+
+3. **`error_message` on success** — Satya's `EntitlementsCallResult`
+   sketch had `error_message: str` with `""` default; Kevin's
+   implementation uses `error_message: str | None = None`. The page
+   handles both: it treats falsy values (None or empty string) as "no
+   error" and only renders the error block when `error_message` is a
+   non-empty string.
+
+## Why this is fine
+
+None of these change the public behavior the page depends on. The page
+calls `fetch_member_self` and `fetch_groups`, reads `result.ok`,
+`result.http_status`, `result.latency_ms`, `result.correlation_id`,
+`result.error_message`, `result.raw_response`, and `result.data`. All
+of those work identically under both readings.
+
+## Action requested
+
+- Satya: confirm Kevin's path/label choices and update the inbox spec
+  in a future revision if needed (no merge blocker).
+- Charlie: tests should assert against Kevin's actual constants
+  (`MEMBERS_SELF_PATH = "/api/entitlements/v2/members/me"`,
+  `MEMBERS_SELF_ENDPOINT_LABEL = "members.self"`), not Satya's sketch.
+- No code change needed in `app/services/entitlements.py` or
+  `app/pages/2_🔑_Entitlements.py`.

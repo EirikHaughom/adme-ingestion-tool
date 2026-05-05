@@ -32,3 +32,24 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+---
+
+## 2026-05-05T10:30:00Z — Cross-agent note from Scribe
+
+The team shipped a new Entitlements smoke-test page and service today
+(pp/services/entitlements.py, pp/pages/2_🔑_Entitlements.py,
+EntitlementsCallResult in pp/models/connection.py). Two probes
+now exist for deployment-health work you may pick up later:
+
+- pp/services/health.py — OSDU service health (already in place)
+- pp/services/entitlements.py — etch_member_self + etch_groups,
+  same shape: EntitlementsCallResult with ok, http_status,
+  latency_ms, correlation_id, rror_message, aw_response,
+  data. Mirrors ServiceHealthResult exactly.
+
+If/when you wire deployment readiness checks (post-deploy smoke,
+synthetic monitoring), both modules are safe to call headlessly:
+stdlib + equests, ~5s timeout, no retries inside the service.
+Correlation-ID extraction is case-insensitive across correlation-id,
+x-correlation-id, equest-id, x-request-id. No new runtime deps
+were added.
