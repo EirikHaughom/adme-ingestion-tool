@@ -339,3 +339,278 @@ README.md, Operator Flow step 3:
 
 Documentation only; no code or test changes. This is a narrative update to reflect the new MSAL flow accurately.
 
+---
+
+### 2026-05-05T15:11:17.396+02:00: Manual token scope configuration handoff
+**By:** Satya
+
+## Decision
+
+Add a manually editable token-scope field to static ADME connection configuration. Default behavior remains the current ADME resource scope, but operators can override it when their tenant/app registration requires a different OAuth resource scope.
+
+## Implementation handoff
+
+### 1. Model contract
+
+- Add `token_scope: str = ADME_RESOURCE_SCOPE` to `ADMEConnection`, after `data_partition_id` and before existing optional auth fields.
+- Keep `ADME_RESOURCE_SCOPE = "https://energy.azure.com/.default"` as the default constant.
+- Keep `ADMEConnection.scope` as the auth-facing property. It should return the normalized configured scope (`token_scope.strip()`), not a hardcoded constant.
+- Include `token_scope` in dataclass equality so changing scope is a connection change.
+- `is_valid()` must require a non-empty normalized scope. Validation should reject blank/whitespace-only scope and obvious whitespace-separated scope values; do not add resource-domain whitelisting.
+- This is configuration, not token material. It may live in Streamlit session state as part of `ADMEConnection`; do not add tokens, pending MSAL payloads, or cache material to the model.
+
+### 2. UI behavior
+
+- Add one Settings text input labeled `Token scope`, preferably after `Client ID` and before `Data partition ID`.
+- Default/value: existing connection `token_scope` when present, otherwise `ADME_RESOURCE_SCOPE`.
+- Placeholder/help: use `https://energy.azure.com/.default`; help text should say this is the OAuth scope requested for ADME tokens and should only be changed when the operator's Entra/ADME setup requires a custom scope.
+- Trim the entered value before constructing `ADMEConnection(token_scope=...)`.
+- Save behavior: changing only token scope must count as a connection change, clear stale health, clear pending/completed user auth, and prompt user impersonation connections to sign in again.
+- Test behavior:
+  - User impersonation: if the draft scope differs from the saved connection, keep Test Connection disabled until settings are saved and a fresh sign-in completes.
+  - Service principal: Test Connection may run after save/test with the chosen scope.
+- Do not mask this field; it is not a secret. Do not log or display access tokens while handling it.
+
+### 3. Backend/auth behavior
+
+- Keep existing auth-service function signatures.
+- `start_user_auth_flow(connection)` must continue to call MSAL with `scopes=[connection.scope]`; after the model change this automatically uses the operator-selected scope.
+- Service-principal `get_token(connection)` must continue to call `ClientSecretCredential.get_token(connection.scope)`.
+- `complete_user_auth_flow()` does not need a separate scope argument; the pending flow was created for the selected scope. If connection/scope changed, Settings must have cleared the stale pending flow before completion.
+- User-auth `get_token(..., user_auth_state=...)` returns the session token minted during sign-in; it must not silently reuse a token after scope changes.
+
+### 4. Tests to update/add
+
+- `tests/test_connection_model.py`
+  - Assert default `token_scope` and `scope` property are `https://energy.azure.com/.default`.
+  - Assert a custom `token_scope` is returned by `scope`.
+  - Assert blank/whitespace scope makes the connection invalid.
+- `tests/test_auth_service.py` and any parallel auth tests
+  - Assert MSAL receives `[custom_scope]` for user impersonation.
+  - Assert `ClientSecretCredential.get_token()` receives `custom_scope` for service principal.
+  - Update old assertions that hardcode only the default scope.
+- `tests/test_settings_page.py`
+  - Update field-contract assertions to include `Token scope`.
+  - Assert default value/help/placeholder use the ADME default scope.
+  - Assert saving/testing persists `ADMEConnection.token_scope`.
+  - Assert changing token scope clears user auth state, pending flow, and health results.
+  - Assert user Test Connection is disabled when only token scope changed until save plus fresh sign-in.
+- `tests/test_connection_state.py`
+  - Add an explicit scope-only connection-change case for `save_connection()` clearing auth and health.
+
+### 5. Documentation note
+
+- Update README operator flow/settings description to mention Token scope defaults to the ADME scope and is only needed for custom Entra/ADME resource-scope setups.
+- Keep the existing redirect URI prerequisite. No secret-handling changes are needed because scope is configuration, not credential material.
+
+### 6. Reviewer gates and sequencing
+
+- Kevin owns the model/auth-service contract update and auth tests first. No auth function signature changes unless Satya re-approves.
+- Judson owns Settings UI/session behavior after the `token_scope` field name and property behavior are committed.
+- Charlie gates regression coverage across model, auth, connection-state, and Settings-page behavior before merge.
+- Scott can update README in parallel after the field label/help text is stable.
+- Satya final-review gate: `ADMEConnection` remains static config only; both auth paths use `connection.scope`; scope changes clear stale user auth and health; no extra abstraction layer is introduced.
+- Required validation after implementation: targeted auth/model/settings/connection-state tests, full pytest, Ruff, and mypy.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Manual token scope backend contract
+**By:** Kevin
+
+## Decision
+
+Backend auth will continue to consume only `connection.scope`. `ADMEConnection.token_scope` is the persisted static configuration field, while `connection.scope` is the compatibility accessor that trims the configured value and falls back to `ADME_RESOURCE_SCOPE` when the configured value is blank or whitespace.
+
+## Why
+
+This keeps MSAL user auth and service-principal auth on one explicit contract without adding new auth-service parameters. A blank operator-entered scope is treated as "use the default ADME scope" rather than a validation failure, so model validation remains focused on endpoint, tenant, client, partition, and service-principal secret requirements.
+
+## Notes for Judson and Scott
+
+Judson: the Settings page can pass trimmed `token_scope` into `ADMEConnection`; if the field is blank, backend behavior falls back safely to the default scope. Scott: operator docs should describe token scope as configuration, not credential material, and mention the default fallback behavior.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Manual token scope in Settings UI
+**By:** Judson
+
+## Decision
+
+Settings exposes a visible, non-secret `Token scope` field after `Client ID`.
+The field defaults to the ADME resource scope when no connection exists, stores
+trimmed operator input on `ADMEConnection.token_scope`, and permits blank input
+so `connection.scope` can use the backend default fallback.
+
+Changing only token scope is treated as a connection change. The existing
+session save path clears stale user auth, pending sign-in flow, and health state
+before prompting the operator to sign in again for user impersonation.
+
+## Why
+
+Operators need one place to adjust OAuth scope when their Entra or ADME setup
+requires it, without treating scope as a secret or changing auth-service call
+signatures. Keeping the change in the normal connection equality path prevents
+reusing tokens or health results minted for a previous scope.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Token Scope Documentation for Operators
+**By:** Scott
+
+## Decision
+
+Update README.md to document the new **Token scope** field in Settings, emphasizing that it is configuration metadata (not a secret) and clarifying when operators should override the default OAuth resource scope.
+
+## Rationale
+
+Satya's implementation handoff (satya-manual-token-scope.md) made clear that token scope is **configuration only**—it must never contain tokens, credentials, or authorization codes. Operators need explicit guidance to:
+
+1. Understand token scope is **not secret material**
+2. Know the **default** (`https://energy.azure.com/.default`) is correct for most deployments
+3. Know **when** to override (only if their Entra/ADME setup requires different scope)
+4. Be protected by **security messaging** that discourages misuse
+
+## Implementation
+
+Added new subsection **Settings: Token Scope** in README.md:
+
+- **What it is:** OAuth resource scope for ADME token acquisition
+- **Default:** `https://energy.azure.com/.default`
+- **When to override:** Only when Entra app registration or ADME deployment requires different scope
+- **Security note:** Never contains tokens, secrets, access codes; misuse is a configuration error, not a feature
+
+## Outcomes
+
+- Operator documentation now reflects Satya's implementation decision
+- Token scope is positioned as safe configuration, not credential material
+- Security messaging discourages credential-leakage scenarios (e.g., accidental paste of access tokens)
+- No code or test changes required; this is pure documentation alignment
+
+## Next Steps
+
+When Judson's Settings UI is merged, the help text/placeholder in the form should match this documentation. This sets expectations before operators encounter the field.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Manual token scope final quality gate
+**By:** Charlie
+
+## Verdict
+
+APPROVE.
+
+## Evidence
+
+- `ADMEConnection.token_scope` is present and `connection.scope` remains the auth-facing accessor, trimming configured values and falling back to `https://energy.azure.com/.default` for blank input.
+- Custom scopes are used by both auth paths: MSAL starts user auth with `[connection.scope]`, and service-principal auth calls `ClientSecretCredential.get_token(connection.scope)`.
+- Token-scope changes are treated as connection changes and clear pending user auth, completed user auth, stale health results, and stale health errors. User impersonation cannot test a changed scope with old auth state; service principal can test with the chosen scope.
+- Settings now shows Token scope with the default placeholder/help, saves the trimmed value, and explicitly says the field is configuration only—not a token or secret—and should only be changed for custom Entra/ADME OAuth scope requirements.
+- README documents the field, default, override guidance, and non-secret status.
+- Blank/whitespace scope decisions still conflict on paper: Satya originally required invalid blank scope, while Kevin/Judson accepted blank-as-default fallback. My final reviewer judgment accepts the Kevin/Judson fallback because implementation, tests, and operator guidance are internally consistent.
+
+## Validation
+
+- `python -m pytest tests\test_connection_model.py tests\test_auth_service.py tests\test_connection_state.py tests\test_settings_page.py` — passed, 49 passed.
+- `python -m pytest` — passed, 80 passed.
+- `python -m ruff check app tests` — passed.
+- `python -m mypy app tests` — passed.
+
+## Notes
+
+Scott's operator-copy fix closed the UI guidance gap, and Kevin's lockout-safe mechanical formatting revision restored lint compliance without changing the approved wording or behavior. No further revision required.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Manual token scope UI copy fix
+**By:** Scott (revision owner; Judson locked out by reviewer gate)
+
+## Verdict
+
+FIXED.
+
+## Evidence
+
+- Charlie's quality gate (charlie-manual-token-scope-review.md) identified missing UI-safety assertions in `tests\test_settings_page.py::test_settings_page_defaults_token_scope_to_adme_resource_scope`.
+- Test assertions require TOKEN_SCOPE_HELP text to include:
+  - "OAuth scope" phrase ✓
+  - "ADME resource scope" phrase ✓
+  - "not a token or secret" (case-insensitive) ✓
+  - "only change" (case-insensitive) ✓
+- Original `TOKEN_SCOPE_HELP` ("OAuth scope used for token acquisition. Defaults to the ADME resource scope.") was too vague and omitted security warnings.
+
+## Implementation
+
+Single-line fix to `app/pages/1_⚙️_Settings.py`:
+
+**Updated `TOKEN_SCOPE_HELP` constant:**
+```python
+TOKEN_SCOPE_HELP = (
+    "OAuth resource scope for ADME token acquisition (defaults to the ADME resource scope). "
+    "This is configuration only—not a token or secret. "
+    "Do not paste tokens, client secrets, or authorization codes here. "
+    "Only change this if your Entra app registration or ADME deployment requires a custom OAuth scope."
+)
+```
+
+Changes align exactly with README operator guidance and include all required test phrases.
+
+## Validation
+
+- `python -m pytest tests\test_settings_page.py::test_settings_page_defaults_token_scope_to_adme_resource_scope` — PASSED
+- `python -m pytest tests\test_settings_page.py` — 19/19 PASSED
+- `python -m pytest tests\test_connection_model.py tests\test_auth_service.py tests\test_connection_state.py tests\test_settings_page.py` — 49/49 PASSED
+
+No auth/model/connection-state code touched. No tests edited. Settings behavior unchanged; only help text improved.
+
+## Outcomes
+
+- Operator-facing Settings field now includes mandatory non-secret warning and override guidance
+- Test assertions pass; Settings UI copy aligns with README wording
+- Feature ready for merge pending final Satya/Eirik approval
+
+## Next
+
+Satya to approve Settings artifact for merge.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Token scope guidance Ruff fix
+**By:** Kevin
+
+## Decision
+
+Apply a formatting-only wrap to the Settings page Token scope help text so Ruff E501 passes. The user-facing copy is semantically unchanged, and there are no auth, model, test, README, or behavior changes in this revision.
+
+## Why
+
+Charlie's re-review was blocked only by line-length failures after the UI-copy revision. A mechanical wrap is the least risky non-locked-out fix because it keeps Judson's Settings artifact and Scott's copy intent intact while clearing the quality gate.
+
+---
+
+### 2026-05-05T15:11:17.396+02:00: Final manual token scope review
+**By:** Satya
+
+## Verdict
+
+APPROVE.
+
+## Contract gates
+
+- `ADMEConnection` remains static connection configuration and now includes `token_scope`; no tokens, pending MSAL flows, authorization codes, or cache material were added to the model.
+- `connection.scope` remains the auth-facing accessor. It trims configured scope and falls back to `https://energy.azure.com/.default` when the configured value is blank, and both MSAL user sign-in and service-principal token acquisition consume `connection.scope`.
+- I accept blank/whitespace **Token scope** as default/fallback behavior, superseding the earlier handoff conflict that asked validation to reject blank scope. This keeps operator behavior internally consistent with Kevin's backend contract, Judson's Settings flow, Charlie's approval, and the current tests.
+- Settings exposes **Token scope** after **Client ID**, uses the ADME default as value/placeholder when no connection exists, gives clear non-secret guidance, trims saved input, and treats scope-only changes as connection changes that clear pending auth, completed user auth, stale health results, and stale health errors.
+- README matches the operator-facing behavior: default ADME scope, custom override guidance, and explicit non-secret status.
+- Charlie's final validation evidence is sufficient. Reviewer lockout was respected: Scott revised Judson's rejected UI-copy artifact, Kevin handled only the follow-up formatting fix after Scott's revision, and Charlie approved the final result.
+
+## Validation
+
+- `python -m pytest tests\test_connection_model.py tests\test_auth_service.py tests\test_connection_state.py tests\test_settings_page.py` — passed, 49 passed.
+- `python -m pytest` — passed, 80 passed.
+- `python -m ruff check app tests` — passed.
+- `python -m mypy app tests` — passed.
+
+## Decision
+
+Ready for coordinator merge handling. No further implementation changes required.
+

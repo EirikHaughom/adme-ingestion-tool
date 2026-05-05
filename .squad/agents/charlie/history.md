@@ -16,6 +16,12 @@
 - 2026-04-24T14:38:18.059+02:00: `app\models\connection.py` is becoming the shared UI/backend contract for auth methods and health probes, but it currently introduces `data_partition_id` and omits `eds`, so review for issue #2 must check scope drift before approval.
 - 2026-05-05T14:11:09.427+02:00: Issue #8 auth review added regression coverage that distinguishes stale MSAL pending flows from newly generated retry flows after missing-pending, auth-denial, state-mismatch, and token-exchange failures.
 
+- 2026-05-05T15:11:17.396+02:00: Manual token scope review found conflicting blank-scope decisions: Satya originally required blank/whitespace scopes to be invalid, while Kevin and Judson accepted blank-as-default fallback. For this gate, treat the Kevin/Judson fallback as the accepted behavior when tests, auth behavior, and operator guidance stay internally consistent. Settings field guidance must itself say token scope is not a token or secret; README-only safety wording is not enough.
+
+- 2026-05-05T15:11:17.396+02:00: Manual token scope re-review after Scott's copy fix proved the functional scope gates now pass, but the production Settings copy introduced Ruff E501 line-length failures. A lockout-safe revision still must satisfy lint gates, not just page assertions.
+
+- 2026-05-05T15:11:17.396+02:00: Final manual token scope review APPROVED after Kevin's mechanical formatting revision: targeted pytest, full pytest, Ruff, and mypy all passed, with Settings preserving explicit non-secret token-scope guidance.
+
 ## 2026-04-24 Issue #2 Test Strategy & Review Gate (Issue #2)
 - Added acceptance criteria to issue #2: auth-mode coverage, per-service health matrices (M25: storage, search, schema, legal, entitlements, workflow, file, dataset, indexer, notification, eds)
 - Created reusable Streamlit page-test scaffolding (monkeypatch st import with StreamlitRecorder)
@@ -147,3 +153,8 @@ All team members successfully completed assigned work for MSAL auth integration:
 - Charlie: Quality gate and regression coverage
 
 Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
+## 2026-05-05: Manual Token Scope Configuration (Complete)
+
+**Status:** COMPLETE
+**Decision:** Manual token scope configuration merged to decisions.md
+**Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.

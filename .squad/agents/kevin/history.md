@@ -16,6 +16,8 @@
 - EDS belongs in the issue #2 service matrix and should use the explicit readiness health endpoint (`/api/eds/v1/health/readiness_check`) with `GET`, not the business `retrievalInstructions` API.
 - Indexer health validation must use the non-mutating readiness endpoint (`/api/indexer/v2/readiness_check`); `reindex` is an operational action, not a safe probe contract.
 - 2026-05-05T14:11:09.427+02:00: Issue #8 auth service now exposes MSAL user-flow helpers that return a redacted pending-flow wrapper and a session-scoped user auth state; user tokens are supplied back to `get_token()` explicitly and service-principal auth remains on `ClientSecretCredential`.
+- 2026-05-05T15:11:17.396+02:00: `ADMEConnection.token_scope` is static configuration; `connection.scope` trims it and falls back to the ADME default when blank so blank UI input does not invalidate otherwise valid connections.
+- 2026-05-05T15:11:17.396+02:00: Token scope Settings guidance was mechanically wrapped to satisfy Ruff E501 without changing copy semantics or backend auth behavior.
 
 ## 2026-04-24 Issue #2 Contract Corrections (Revision Batch)
 - Fixed Indexer probe contract: removed mutating GET /api/indexer/v2/reindex, replaced with read-only GET /api/indexer/v2/readiness_check
@@ -97,3 +99,8 @@ All team members successfully completed assigned work for MSAL auth integration:
 - Charlie: Quality gate and regression coverage
 
 Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
+## 2026-05-05: Manual Token Scope Configuration (Complete)
+
+**Status:** COMPLETE
+**Decision:** Manual token scope configuration merged to decisions.md
+**Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.

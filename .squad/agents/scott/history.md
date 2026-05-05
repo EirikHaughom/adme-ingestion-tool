@@ -12,6 +12,8 @@
 - Issue #8 (user impersonation auth flow) requires explicit Entra app registration prerequisite documentation: redirect URI `http://localhost:8501` must be registered in the Entra app. Missing this URI causes auth to fail at the final browser callback step, even if the MSAL code is correct. This is a configuration issue, not a code issue, and operators must set it up before testing user-impersonation flows.
 - Platform prerequisites belong in README.md, not in implementation code. Operator-focused docs catch setup errors early and prevent misattribution to bugs.
 - Documentation must stay synchronized with auth UX changes. When user impersonation flow changes from separate-tab-manual-return to browser-automatic-return, README wording describing the UX must be updated to match. Charlie caught this during review—keep docs alive with code.
+- Manual token scope feature (post-#8): Token scope is configuration, never credential material. Documentation must clearly distinguish it from secrets and guide operators on when/why to override the default OAuth resource scope. Satya's decision handoff was clear: scope field belongs in Settings, defaults to `https://energy.azure.com/.default`, and requires zero-tolerance messaging against misuse.
+- UI-copy alignment is critical for operator safety. Charlie's quality gate caught that Settings TOKEN_SCOPE_HELP lacked explicit "not a token or secret" and "only change when" messaging that the test assertions required. Minimal fix: update the help constant to include all required phrases. No Settings behavior or auth code changes were needed—only copy.
 
 ## Issue #8 Auth Flow - Team Completion (2026-05-05)
 
@@ -25,3 +27,8 @@ All team members successfully completed assigned work for MSAL auth integration:
 - Charlie: Quality gate and regression coverage
 
 Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
+## 2026-05-05: Manual Token Scope Configuration (Complete)
+
+**Status:** COMPLETE
+**Decision:** Manual token scope configuration merged to decisions.md
+**Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.

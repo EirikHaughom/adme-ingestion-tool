@@ -14,6 +14,7 @@
 - 2026-04-24T14:38:18.059+02:00: ADME validation depends on `app\services\auth.py`, `app\services\health.py`, and the canonical `OSDU_SERVICES` list in `app\models\connection.py`, including the EDS probe.
 - 2026-04-24T14:38:18.059+02:00: UI review gates for issue #2 are best protected with page tests that assert the exact field contract, auth-method field gating, masked `client_secret`, and matrix rendering for degraded service results.
 - 2026-05-05T14:11:09.427+02:00: Issue #8 Settings wiring keeps `ADMEConnection` static while storing pending MSAL flows and completed user auth state in explicit Streamlit session keys; callbacks are consumed once, query params are cleared, and user sign-out/auth changes clear stale health.
+- 2026-05-05T15:11:17.396+02:00: Settings now exposes non-secret `Token scope` configuration, defaults it to the ADME scope, stores trimmed operator input, and treats scope-only changes as auth/health-stale connection changes.
 
 ## 2026-04-24 Issue #2 Implementation Complete
 - Implemented welcome page in app/main.py (landing, connection status summary)
@@ -75,3 +76,8 @@ All team members successfully completed assigned work for MSAL auth integration:
 - Charlie: Quality gate and regression coverage
 
 Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
+## 2026-05-05: Manual Token Scope Configuration (Complete)
+
+**Status:** COMPLETE
+**Decision:** Manual token scope configuration merged to decisions.md
+**Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.

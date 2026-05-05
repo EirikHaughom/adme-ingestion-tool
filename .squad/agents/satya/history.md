@@ -101,3 +101,11 @@ All team members successfully completed assigned work for MSAL auth integration:
 - Charlie: Quality gate and regression coverage
 
 Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
+
+- 2026-05-05T15:11:17.396+02:00: Manual token-scope feature contract: add `ADMEConnection.token_scope` defaulting to `ADME_RESOURCE_SCOPE`, keep auth callers on `connection.scope`, and treat scope changes as connection changes that clear user auth, pending flows, and health.
+- 2026-05-05T15:11:17.396+02:00: Final manual token-scope review approved the implementation. Accepted blank/whitespace scope as default fallback via `connection.scope`, confirmed both MSAL and service-principal auth use that accessor, accepted Charlie's validation and lockout-safe revision evidence, and independently verified targeted tests (49), full pytest (80), Ruff, and mypy.
+## 2026-05-05: Manual Token Scope Configuration (Complete)
+
+**Status:** COMPLETE
+**Decision:** Manual token scope configuration merged to decisions.md
+**Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
