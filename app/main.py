@@ -24,6 +24,7 @@ from app.connection_state import (  # noqa: E402
 )
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Settings.py"
+ENTITLEMENTS_PAGE_PATH = "pages/2_🔑_Entitlements.py"
 
 
 def main() -> None:
@@ -41,6 +42,11 @@ def main() -> None:
         SETTINGS_PAGE_PATH,
         label="Open Settings",
         icon="⚙️",
+    )
+    st.page_link(
+        ENTITLEMENTS_PAGE_PATH,
+        label="Open Entitlements smoke test",
+        icon="🔑",
     )
 
     ensure_session_defaults(st.session_state)
