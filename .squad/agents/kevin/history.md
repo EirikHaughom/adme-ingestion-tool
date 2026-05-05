@@ -15,6 +15,7 @@
 - Health probes must send both `Authorization` and `data-partition-id`, and tests should keep `tests/conftest.py` fixtures aligned with that required input.
 - EDS belongs in the issue #2 service matrix and should use the explicit readiness health endpoint (`/api/eds/v1/health/readiness_check`) with `GET`, not the business `retrievalInstructions` API.
 - Indexer health validation must use the non-mutating readiness endpoint (`/api/indexer/v2/readiness_check`); `reindex` is an operational action, not a safe probe contract.
+- 2026-05-05T14:11:09.427+02:00: Issue #8 auth service now exposes MSAL user-flow helpers that return a redacted pending-flow wrapper and a session-scoped user auth state; user tokens are supplied back to `get_token()` explicitly and service-principal auth remains on `ClientSecretCredential`.
 
 ## 2026-04-24 Issue #2 Contract Corrections (Revision Batch)
 - Fixed Indexer probe contract: removed mutating GET /api/indexer/v2/reindex, replaced with read-only GET /api/indexer/v2/readiness_check
@@ -83,3 +84,16 @@
 - Validation: All tests passing (26/26), ruff clean, mypy clean, no regressions in service-principal tests
 - Status: Implementation complete, approved for merge
 
+
+## Issue #8 Auth Flow - Team Completion (2026-05-05)
+
+**Status:** ✅ COMPLETE & VALIDATED
+
+All team members successfully completed assigned work for MSAL auth integration:
+- Satya: Lead review and final validation
+- Kevin: Auth-service implementation
+- Scott: Documentation and README updates
+- Judson: Settings page integration
+- Charlie: Quality gate and regression coverage
+
+Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.

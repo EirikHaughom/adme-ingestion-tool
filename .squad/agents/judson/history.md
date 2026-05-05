@@ -13,6 +13,7 @@
 - 2026-04-24T14:38:18.059+02:00: Operator-facing connection flow should save valid settings, clear stale health results when settings change, and keep `client_secret` only in Streamlit session state.
 - 2026-04-24T14:38:18.059+02:00: ADME validation depends on `app\services\auth.py`, `app\services\health.py`, and the canonical `OSDU_SERVICES` list in `app\models\connection.py`, including the EDS probe.
 - 2026-04-24T14:38:18.059+02:00: UI review gates for issue #2 are best protected with page tests that assert the exact field contract, auth-method field gating, masked `client_secret`, and matrix rendering for degraded service results.
+- 2026-05-05T14:11:09.427+02:00: Issue #8 Settings wiring keeps `ADMEConnection` static while storing pending MSAL flows and completed user auth state in explicit Streamlit session keys; callbacks are consumed once, query params are cleared, and user sign-out/auth changes clear stale health.
 
 ## 2026-04-24 Issue #2 Implementation Complete
 - Implemented welcome page in app/main.py (landing, connection status summary)
@@ -61,3 +62,16 @@
 - Test updates: Added UI text assertions in tests/test_settings_page.py verifying guidance contains "new browser tab" and "return here"
 - Status: UI guidance implementation complete, approved for merge
 
+
+## Issue #8 Auth Flow - Team Completion (2026-05-05)
+
+**Status:** ✅ COMPLETE & VALIDATED
+
+All team members successfully completed assigned work for MSAL auth integration:
+- Satya: Lead review and final validation
+- Kevin: Auth-service implementation
+- Scott: Documentation and README updates
+- Judson: Settings page integration
+- Charlie: Quality gate and regression coverage
+
+Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.

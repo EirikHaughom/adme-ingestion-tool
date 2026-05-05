@@ -8,6 +8,7 @@
 ## Learnings
 
 - Satya owns scope, architecture decisions, and reviewer gating for the ADME control plane.
+- 2026-05-05T14:11:09.427+02:00: Issue #8 implementation handoff keeps auth tokens, MSAL flow payloads, and cache material out of `ADMEConnection`; session auth belongs in `app.connection_state`, and Settings owns callback consume/clear sequencing.
 - The product is an operator-facing Streamlit app for managing ADME workflows and platform operations.
 - 2026-04-24: Established project scaffolding — flat `app/` layout, `pyproject.toml` as config hub, latest stable deps (Streamlit 1.56+, Python ≥3.11, ruff 0.15+, pytest 9.0+).
 - Key file paths: `app/main.py` (entry point), `pyproject.toml` (deps + tool config), `.streamlit/config.toml` (UI theme), `tests/` (test suite).
@@ -79,3 +80,24 @@
 - Expected outcome: User understands full UX flow; opens new tab for sign-in → closes tab → returns to Streamlit → sees results.
 - Design approved — ready for implementation
 
+## 2026-04-26 Issue #8 App-Returning Auth Flow Design
+- Current `InteractiveBrowserCredential` path cannot provide a true redirect-back-to-Streamlit UX because the SDK owns the localhost:8400 callback listener.
+- Recommended replacement: app-managed MSAL Python authorization-code + PKCE flow with `redirect_uri=http://localhost:8501` and scope `https://energy.azure.com/.default`.
+- Target operator UX: Settings page shows Sign In when unauthenticated, browser returns to Streamlit authenticated after Entra login, and Sign Out clears session state. Service-principal auth remains unchanged.
+- Main implementation risk: Streamlit reruns require OAuth callback query parameters to be consumed and cleared exactly once to avoid replaying token exchange.
+- Design complete — ready for implementation planning
+
+- 2026-05-05T14:11:09.427+02:00: Final issue #8 review approved the app-returning MSAL auth contract: service wraps MSAL, Streamlit session owns pending/completed auth state, callback params clear once, and service-principal auth remains unchanged.
+
+## Issue #8 Auth Flow - Team Completion (2026-05-05)
+
+**Status:** ✅ COMPLETE & VALIDATED
+
+All team members successfully completed assigned work for MSAL auth integration:
+- Satya: Lead review and final validation
+- Kevin: Auth-service implementation
+- Scott: Documentation and README updates
+- Judson: Settings page integration
+- Charlie: Quality gate and regression coverage
+
+Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.

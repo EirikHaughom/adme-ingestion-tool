@@ -14,6 +14,7 @@
 - 2026-04-24T14:38:18.059+02:00: Key test paths for the welcome/settings work are `app\main.py`, `app\pages\`, `tests\conftest.py`, and `tests\test_main.py`.
 - 2026-04-24T14:38:18.059+02:00: The requested operator workflow needs welcome/settings pages, two auth modes (`user_impersonation` and `service_principal`), required connection inputs, and service-by-service health reporting.
 - 2026-04-24T14:38:18.059+02:00: `app\models\connection.py` is becoming the shared UI/backend contract for auth methods and health probes, but it currently introduces `data_partition_id` and omits `eds`, so review for issue #2 must check scope drift before approval.
+- 2026-05-05T14:11:09.427+02:00: Issue #8 auth review added regression coverage that distinguishes stale MSAL pending flows from newly generated retry flows after missing-pending, auth-denial, state-mismatch, and token-exchange failures.
 
 ## 2026-04-24 Issue #2 Test Strategy & Review Gate (Issue #2)
 - Added acceptance criteria to issue #2: auth-mode coverage, per-service health matrices (M25: storage, search, schema, legal, entitlements, workflow, file, dataset, indexer, notification, eds)
@@ -133,3 +134,16 @@
 - Risk assessment: All risks mitigated; no regressions detected
 - Status: ✓ APPROVED FOR MERGE — production-ready
 
+
+## Issue #8 Auth Flow - Team Completion (2026-05-05)
+
+**Status:** ✅ COMPLETE & VALIDATED
+
+All team members successfully completed assigned work for MSAL auth integration:
+- Satya: Lead review and final validation
+- Kevin: Auth-service implementation
+- Scott: Documentation and README updates
+- Judson: Settings page integration
+- Charlie: Quality gate and regression coverage
+
+Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for merge.
