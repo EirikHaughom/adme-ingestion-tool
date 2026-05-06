@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from time import perf_counter
+from urllib.parse import quote
 
 import requests  # type: ignore[import-untyped]
 
@@ -20,11 +21,10 @@ from app.models.connection import ADMEConnection, EntitlementsCallResult
 
 ENTITLEMENTS_TIMEOUT_SECONDS = 5
 
-MEMBERS_SELF_ENDPOINT_LABEL = "members.self"
 GROUPS_ENDPOINT_LABEL = "groups"
 
-MEMBERS_SELF_PATH = "/api/entitlements/v2/members/me"
 GROUPS_PATH = "/api/entitlements/v2/groups"
+MY_GROUPS_PATH_TEMPLATE = "/api/entitlements/v2/members/{object_id}/groups"
 
 # Probed in order; the first header that is present wins.  ADME and any
 # proxies in front of it may use different casings, so the lookup itself
@@ -39,16 +39,33 @@ _CORRELATION_HEADER_NAMES: tuple[str, ...] = (
 _ERROR_BODY_TEXT_LIMIT = 500
 
 
-def fetch_member_self(
+def fetch_my_groups(
     connection: ADMEConnection,
     token: str,
+    object_id: str,
 ) -> EntitlementsCallResult:
-    """Call ``GET /api/entitlements/v2/members/me`` and return the result."""
+    """Call ``GET /api/entitlements/v2/members/{oid}/groups?type=none``.
+
+    ``object_id`` is the caller's Entra ID OID, typically obtained via
+    :func:`app.services.token_utils.extract_object_id` on the same access
+    token used here.  The endpoint label embeds the OID so each operator's
+    session history reflects their own identity.
+    """
+    if not object_id or not object_id.strip():
+        raise ValueError(
+            "A non-empty Entra Object ID is required for the my-groups call."
+        )
+    quoted_object_id = quote(object_id, safe="")
+    path = (
+        MY_GROUPS_PATH_TEMPLATE.format(object_id=quoted_object_id)
+        + "?type=none"
+    )
+    endpoint_label = f"members.{object_id}.groups"
     return _call_entitlements(
         connection=connection,
         token=token,
-        endpoint_label=MEMBERS_SELF_ENDPOINT_LABEL,
-        path=MEMBERS_SELF_PATH,
+        endpoint_label=endpoint_label,
+        path=path,
     )
 
 

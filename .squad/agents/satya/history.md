@@ -119,3 +119,10 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Auto-run-once guard prevents Streamlit-rerun re-fire; explicit Re-run button bypasses guard. No token re-prompt on this page; no per-page partition override.
 - Out of scope v1: groups pagination, filtering UI, membership management, cross-rerun caching.
 - Handoff: Kevin (service + model), Judson (page + chart + history wiring), Charlie (mocked-HTTP service tests + page smoke test). No Scott work, no new deps.
+
+## 2026-05-06 Entitlements 405 fix (Mariel)
+- Root cause: `/api/entitlements/v2/members/me` does not exist in ADME — returns 405. Real per-user endpoint is `/api/entitlements/v2/members/{object-id}/groups?type=none`, keyed on Entra OID, and returns desId/memberEmail/groups in one payload.
+- Decision: extract OID from JWT `oid` claim via stdlib base64url + json in new `app/services/token_utils.py` (no signature check — we just got the token from MSAL); add `fetch_my_groups(connection, token, object_id)`; delete `fetch_member_self` + `MEMBERS_SELF_*` constants entirely.
+- Page: identity card derived from my-groups response (memberEmail + desId/OID); my-groups primary card; all-groups demoted to secondary expander; pre-flight guard renders friendly error and skips HTTP when OID missing.
+- History label for the per-user call is the literal string `members.{oid}.groups` — keeps chart axes/session history free of per-user OIDs.
+- Handoff: Kevin (service + token_utils), Judson (page rewire), Charlie (delete member-self tests, add token_utils + my-groups tests, update page tests). No Scott, no new deps.

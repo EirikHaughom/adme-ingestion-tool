@@ -31,10 +31,13 @@ ENTITLEMENTS_PAGE_PATH = (
 
 HISTORY_KEY = "entitlements_history"
 AUTORUN_KEY = "entitlements_autorun_done"
-LAST_MEMBER_KEY = "entitlements_last_member"
+LAST_MY_GROUPS_KEY = "entitlements_last_my_groups"
 LAST_GROUPS_KEY = "entitlements_last_groups"
 RERUN_LABEL = "🔄 Re-run entitlements test"
 CLEAR_LABEL = "🧹 Clear history"
+
+_OID = "11111111-2222-3333-4444-555555555555"
+_MY_GROUPS_LABEL = f"members.{_OID}.groups"
 
 
 def _load_entitlements_module(
@@ -75,17 +78,32 @@ def _user_connection() -> ADMEConnection:
     )
 
 
-def _ok_member_result() -> EntitlementsCallResult:
+def _ok_my_groups_result(
+    *,
+    des_id: str = "operator@example.com",
+    member_email: str = "operator@example.com",
+    groups: list[dict[str, Any]] | None = None,
+) -> EntitlementsCallResult:
+    if groups is None:
+        groups = [
+            {"name": "users", "email": "users@example", "description": "all"},
+            {"name": "admins", "email": "admins@example", "description": "ops"},
+        ]
+    payload: dict[str, Any] = {
+        "desId": des_id,
+        "memberEmail": member_email,
+        "groups": groups,
+    }
     return EntitlementsCallResult(
-        endpoint="members.self",
-        path="/api/entitlements/v2/members/me",
+        endpoint=_MY_GROUPS_LABEL,
+        path=f"/api/entitlements/v2/members/{_OID}/groups?type=none",
         ok=True,
         http_status=200,
         latency_ms=12.3,
-        correlation_id="corr-self",
+        correlation_id="corr-mygroups",
         error_message=None,
-        raw_response={"email": "op@example.com"},
-        data={"email": "op@example.com"},
+        raw_response=payload,
+        data=payload,
     )
 
 
@@ -108,10 +126,10 @@ def _ok_groups_result() -> EntitlementsCallResult:
     )
 
 
-def _failed_result() -> EntitlementsCallResult:
+def _failed_my_groups_result() -> EntitlementsCallResult:
     return EntitlementsCallResult(
-        endpoint="groups",
-        path="/api/entitlements/v2/groups",
+        endpoint=_MY_GROUPS_LABEL,
+        path=f"/api/entitlements/v2/members/{_OID}/groups?type=none",
         ok=False,
         http_status=403,
         latency_ms=8.1,
@@ -126,24 +144,34 @@ def _patch_service(
     page_module: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    member_result: EntitlementsCallResult | None = None,
+    my_groups_result: EntitlementsCallResult | None = None,
     groups_result: EntitlementsCallResult | None = None,
     token: str = "test-token",
+    object_id: str | None = _OID,
 ) -> dict[str, list[Any]]:
-    """Patch the page's bound service + token symbols and record calls."""
-    member_calls: list[tuple[Any, str]] = []
+    """Patch the page's bound service + token + OID symbols and record calls."""
+    my_groups_calls: list[tuple[Any, str, str]] = []
     groups_calls: list[tuple[Any, str]] = []
     token_calls: list[Any] = []
+    extract_calls: list[str] = []
 
     def fake_get_token(connection: ADMEConnection, **_: Any) -> str:
         token_calls.append(connection)
         return token
 
-    def fake_fetch_member_self(
-        connection: ADMEConnection, supplied_token: str
+    def fake_extract_object_id(supplied_token: str) -> str | None:
+        extract_calls.append(supplied_token)
+        return object_id
+
+    def fake_fetch_my_groups(
+        connection: ADMEConnection,
+        supplied_token: str,
+        supplied_object_id: str,
     ) -> EntitlementsCallResult:
-        member_calls.append((connection, supplied_token))
-        return member_result or _ok_member_result()
+        my_groups_calls.append(
+            (connection, supplied_token, supplied_object_id)
+        )
+        return my_groups_result or _ok_my_groups_result()
 
     def fake_fetch_groups(
         connection: ADMEConnection, supplied_token: str
@@ -152,13 +180,17 @@ def _patch_service(
         return groups_result or _ok_groups_result()
 
     monkeypatch.setattr(page_module, "get_token", fake_get_token)
-    monkeypatch.setattr(page_module, "fetch_member_self", fake_fetch_member_self)
+    monkeypatch.setattr(
+        page_module, "extract_object_id", fake_extract_object_id
+    )
+    monkeypatch.setattr(page_module, "fetch_my_groups", fake_fetch_my_groups)
     monkeypatch.setattr(page_module, "fetch_groups", fake_fetch_groups)
 
     return {
-        "member": member_calls,
+        "my_groups": my_groups_calls,
         "groups": groups_calls,
         "token": token_calls,
+        "extract": extract_calls,
     }
 
 
@@ -186,9 +218,10 @@ def test_page_blocks_when_no_connection_configured(
     assert streamlit_recorder.calls_named("page_link"), (
         "page should link operators back to Settings"
     )
-    assert spy["member"] == []
+    assert spy["my_groups"] == []
     assert spy["groups"] == []
     assert spy["token"] == []
+    assert spy["extract"] == []
 
 
 def test_page_blocks_when_user_token_missing(
@@ -207,8 +240,9 @@ def test_page_blocks_when_user_token_missing(
         call.args[0] for call in streamlit_recorder.calls_named("info")
     ]
     assert any("Settings" in message for message in info_messages)
-    assert spy["member"] == []
+    assert spy["my_groups"] == []
     assert spy["groups"] == []
+    assert spy["extract"] == []
 
 
 def test_page_blocks_when_data_partition_missing(
@@ -232,7 +266,50 @@ def test_page_blocks_when_data_partition_missing(
     assert streamlit_recorder.calls_named("page_link"), (
         "operators should be pointed back to Settings"
     )
-    assert spy["member"] == []
+    assert spy["my_groups"] == []
+    assert spy["groups"] == []
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight: token has no OID claim — friendly error, no HTTP fired
+# ---------------------------------------------------------------------------
+
+
+def test_page_blocks_when_token_has_no_oid_claim(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
+    spy = _patch_service(page_module, monkeypatch, object_id=None)
+
+    page_module.main()
+
+    # Token was retrieved (so we could try to read the claim) and OID
+    # extraction was attempted exactly once.
+    assert len(spy["token"]) == 1
+    assert spy["extract"] == ["test-token"]
+
+    error_messages = [
+        call.args[0] for call in streamlit_recorder.calls_named("error")
+    ]
+    assert error_messages, "no-OID branch must surface a friendly error"
+    combined = "\n".join(error_messages)
+    assert "Object ID" in combined
+    assert "Settings" in combined or any(
+        "Settings" in str(call.args[0])
+        for call in streamlit_recorder.calls_named("page_link")
+    )
+
+    # Page must link back to Settings so the operator can re-sign-in.
+    assert streamlit_recorder.calls_named("page_link"), (
+        "no-OID branch must link operators back to Settings"
+    )
+
+    # Crucially, neither HTTP call fires.
+    assert spy["my_groups"] == []
     assert spy["groups"] == []
 
 
@@ -253,9 +330,12 @@ def test_auto_run_fires_both_calls_on_first_render(
 
     page_module.main()
 
-    assert len(spy["member"]) == 1
-    assert len(spy["groups"]) == 1
     assert len(spy["token"]) == 1
+    assert spy["extract"] == ["test-token"]
+    assert len(spy["my_groups"]) == 1
+    # fetch_my_groups received the OID extracted from the token.
+    assert spy["my_groups"][0][2] == _OID
+    assert len(spy["groups"]) == 1
     assert streamlit_recorder.session_state[AUTORUN_KEY] is True
 
 
@@ -267,16 +347,19 @@ def test_auto_run_does_not_fire_again_on_rerun(
         _service_principal_connection()
     )
     streamlit_recorder.session_state[AUTORUN_KEY] = True
-    streamlit_recorder.session_state[LAST_MEMBER_KEY] = _ok_member_result()
+    streamlit_recorder.session_state[LAST_MY_GROUPS_KEY] = (
+        _ok_my_groups_result()
+    )
     streamlit_recorder.session_state[LAST_GROUPS_KEY] = _ok_groups_result()
     page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
     spy = _patch_service(page_module, monkeypatch)
 
     page_module.main()
 
-    assert spy["member"] == []
+    assert spy["my_groups"] == []
     assert spy["groups"] == []
     assert spy["token"] == []
+    assert spy["extract"] == []
 
 
 def test_rerun_button_bypasses_autorun_guard(
@@ -293,16 +376,136 @@ def test_rerun_button_bypasses_autorun_guard(
 
     page_module.main()
 
-    assert len(spy["member"]) == 1
+    # Both calls fire when the operator hits Re-run, even though autorun is True.
+    assert len(spy["my_groups"]) == 1
     assert len(spy["groups"]) == 1
 
 
 # ---------------------------------------------------------------------------
-# History append + clear
+# Identity card + my-groups card rendering
 # ---------------------------------------------------------------------------
 
 
-def test_each_run_appends_two_history_entries(
+def test_identity_card_renders_des_id_and_member_email(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
+    _patch_service(
+        page_module,
+        monkeypatch,
+        my_groups_result=_ok_my_groups_result(
+            des_id="alice@example.com",
+            member_email="alice.user@example.com",
+        ),
+    )
+
+    page_module.main()
+
+    success_messages = [
+        call.args[0] for call in streamlit_recorder.calls_named("success")
+    ]
+    combined = "\n".join(success_messages)
+    assert "alice@example.com" in combined
+    assert "alice.user@example.com" in combined
+
+
+def test_my_groups_subheader_shows_count_from_response(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
+    _patch_service(
+        page_module,
+        monkeypatch,
+        my_groups_result=_ok_my_groups_result(
+            groups=[
+                {"name": "g1", "email": "g1@x", "description": ""},
+                {"name": "g2", "email": "g2@x", "description": ""},
+                {"name": "g3", "email": "g3@x", "description": ""},
+            ],
+        ),
+    )
+
+    page_module.main()
+
+    subheaders = [
+        call.args[0] for call in streamlit_recorder.calls_named("subheader")
+    ]
+    assert any(
+        "Groups you belong to" in s and "(3)" in s for s in subheaders
+    ), f"missing 'Groups you belong to (3)' subheader; got {subheaders!r}"
+
+
+def test_empty_my_groups_shows_friendly_admin_message(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
+    _patch_service(
+        page_module,
+        monkeypatch,
+        my_groups_result=_ok_my_groups_result(groups=[]),
+    )
+
+    page_module.main()
+
+    info_messages = [
+        call.args[0] for call in streamlit_recorder.calls_named("info")
+    ]
+    combined = "\n".join(info_messages)
+    assert "ask an admin" in combined.lower()
+
+
+# ---------------------------------------------------------------------------
+# All-groups expander
+# ---------------------------------------------------------------------------
+
+
+def test_all_groups_expander_exists_collapsed_and_does_not_block_groups_call(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
+    spy = _patch_service(page_module, monkeypatch)
+
+    page_module.main()
+
+    expanders = streamlit_recorder.calls_named("expander")
+    all_groups_expanders = [
+        call for call in expanders
+        if call.args and "All groups in this partition" in call.args[0]
+    ]
+    assert len(all_groups_expanders) == 1, (
+        "all-groups secondary expander should be rendered exactly once"
+    )
+    assert all_groups_expanders[0].kwargs.get("expanded") is False, (
+        "all-groups expander must default to collapsed"
+    )
+
+    # Collapsing the expander does NOT prevent fetch_groups from running —
+    # the call still fires so the latency chart and history have data.
+    assert len(spy["groups"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# History append: 2 entries with the new endpoint labels
+# ---------------------------------------------------------------------------
+
+
+def test_each_run_appends_two_history_entries_with_correct_labels(
     streamlit_recorder: StreamlitRecorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -318,7 +521,7 @@ def test_each_run_appends_two_history_entries(
     assert isinstance(history, list)
     assert len(history) == 2
     endpoints = [entry["endpoint"] for entry in history]
-    assert endpoints == ["members.self", "groups"]
+    assert endpoints == [_MY_GROUPS_LABEL, "groups"]
     assert all("timestamp" in entry for entry in history)
     assert all("latency_ms" in entry for entry in history)
     assert all("ok" in entry for entry in history)
@@ -334,21 +537,23 @@ def test_clear_history_button_empties_session_history(
     streamlit_recorder.session_state[AUTORUN_KEY] = True
     streamlit_recorder.session_state[HISTORY_KEY] = [
         {
-            "timestamp": "2026-05-05T10:30:00Z",
-            "endpoint": "members.self",
+            "timestamp": "2026-05-06T10:30:00Z",
+            "endpoint": _MY_GROUPS_LABEL,
             "latency_ms": 10.0,
             "http_status": 200,
             "ok": True,
         },
         {
-            "timestamp": "2026-05-05T10:30:01Z",
+            "timestamp": "2026-05-06T10:30:01Z",
             "endpoint": "groups",
             "latency_ms": 12.0,
             "http_status": 200,
             "ok": True,
         },
     ]
-    streamlit_recorder.session_state[LAST_MEMBER_KEY] = _ok_member_result()
+    streamlit_recorder.session_state[LAST_MY_GROUPS_KEY] = (
+        _ok_my_groups_result()
+    )
     streamlit_recorder.session_state[LAST_GROUPS_KEY] = _ok_groups_result()
     streamlit_recorder.button_responses[CLEAR_LABEL] = True
     page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
@@ -357,16 +562,16 @@ def test_clear_history_button_empties_session_history(
     page_module.main()
 
     assert streamlit_recorder.session_state[HISTORY_KEY] == []
-    assert streamlit_recorder.session_state[LAST_MEMBER_KEY] is None
+    assert streamlit_recorder.session_state[LAST_MY_GROUPS_KEY] is None
     assert streamlit_recorder.session_state[LAST_GROUPS_KEY] is None
 
 
 # ---------------------------------------------------------------------------
-# Error rendering
+# Error rendering on my-groups failure
 # ---------------------------------------------------------------------------
 
 
-def test_failed_call_surfaces_message_status_and_correlation_id(
+def test_failed_my_groups_surfaces_message_status_and_correlation_id(
     streamlit_recorder: StreamlitRecorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -377,7 +582,7 @@ def test_failed_call_surfaces_message_status_and_correlation_id(
     _patch_service(
         page_module,
         monkeypatch,
-        groups_result=_failed_result(),
+        my_groups_result=_failed_my_groups_result(),
     )
 
     page_module.main()
@@ -385,15 +590,28 @@ def test_failed_call_surfaces_message_status_and_correlation_id(
     error_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("error")
     ]
-    assert error_messages, "expected at least one st.error for the failed call"
+    assert error_messages, "expected at least one st.error for failed my-groups"
     combined = "\n".join(error_messages)
     assert "forbidden by policy" in combined
     assert "HTTP 403" in combined
     assert "corr-fail-7" in combined
 
+    # Identity success card MUST NOT render the desId / memberEmail block on
+    # failure — only the all-groups success card from the still-ok fetch_groups
+    # call may surface a success message. Confirm no success contains the
+    # identity copy.
+    success_messages = [
+        call.args[0] for call in streamlit_recorder.calls_named("success")
+    ]
+    assert not any(
+        "Authenticated as" in str(message) for message in success_messages
+    ), (
+        "identity success card must not render when fetch_my_groups failed"
+    )
+
 
 # ---------------------------------------------------------------------------
-# User-impersonation flow with a stored auth state runs the test
+# User-impersonation flow with stored auth state runs the test
 # ---------------------------------------------------------------------------
 
 
@@ -410,5 +628,5 @@ def test_user_impersonation_with_token_runs_test(
 
     page_module.main()
 
-    assert len(spy["member"]) == 1
+    assert len(spy["my_groups"]) == 1
     assert len(spy["groups"]) == 1

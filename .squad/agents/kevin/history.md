@@ -137,3 +137,11 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Error path (non-2xx): error_message picks message/detail/error/title/errors fields shape-tolerantly and truncates to 500 chars; raw_response is parsed JSON if available, else raw text, else None.
 - Timeout returns ok=False, http_status=None, error_message='Request timed out after 5s'. Other RequestException returns 'TypeName: msg'. Defensive bare-Exception branch added for safety (pragma: no cover).
 - ruff and mypy both clean. No new dependencies. Did NOT touch tests (Charlie owns) or any page (Judson owns).
+
+## 2026-05-06 Entitlements 405 fix — my-groups + OID extraction (Mariel)
+- New `app/services/token_utils.py` with `extract_object_id(token)`: stdlib-only base64url + json. Pads payload segment with `=` until len%%4==0, returns `payload.get('oid')`, swallows ValueError/binascii.Error/UnicodeDecodeError/IndexError to None. No signature verification — trust boundary is MSAL, not this helper. Module docstring is explicit about that.
+- `app/services/entitlements.py`: deleted `fetch_member_self`, `MEMBERS_SELF_ENDPOINT_LABEL`, `MEMBERS_SELF_PATH`. The /members/me endpoint does not exist on ADME (returns 405); ripping it out at import time so any stale caller fails loudly (Charlie/Judson catch).
+- Added `MY_GROUPS_PATH_TEMPLATE = '/api/entitlements/v2/members/{object_id}/groups'` and `fetch_my_groups(connection, token, object_id)`. URL-encodes the OID via `urllib.parse.quote(object_id, safe='')` — defensive even though OIDs are GUIDs — then appends literal `?type=none`. Reuses `_call_entitlements` verbatim (timeout, correlation-id extraction, error parsing).
+- Per Mariel's explicit instruction the endpoint label is the f-string `f'members.{object_id}.groups'` (carries the actual OID). This diverges from Satya's note about a literal `{oid}` placeholder; followed Mariel because she's the requester and the task statement called it out specifically.
+- `object_id` validation matches the existing `token` empty-check pattern: ValueError on empty/whitespace before any HTTP work. `fetch_groups` and `GROUPS_PATH` untouched.
+- Tests and page rewire deliberately not touched — Charlie and Judson own those. ruff/mypy clean on both edited files.
