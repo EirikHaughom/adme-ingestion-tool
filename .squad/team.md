@@ -17,6 +17,7 @@
 | Kevin | Backend Dev | `.squad/agents/kevin/charter.md` | ✅ Active |
 | Scott | Cloud DevOps | `.squad/agents/scott/charter.md` | ✅ Active |
 | Charlie | Tester | `.squad/agents/charlie/charter.md` | ✅ Active |
+| Darryl | OSDU / ADME Ingestion Expert | `.squad/agents/darryl/charter.md` | 🛢️ Ingestion |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
 | Ralph | Work Monitor | `.squad/agents/ralph/charter.md` | 🔄 Monitor |
 

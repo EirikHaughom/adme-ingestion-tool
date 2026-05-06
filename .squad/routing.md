@@ -7,7 +7,9 @@ How to decide who handles what.
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
 | Streamlit UI & operator workflows | Judson | Build pages, forms, dashboards, status views |
-| ADME/OSDU integrations | Kevin | Connect to ADME APIs, model backend services, handle domain logic |
+| Ingestion Streamlit pages (upload → monitor → verify) | Darryl + Judson | Co-owned: Darryl supplies domain flow/contract, Judson supplies page idiom |
+| OSDU / ADME ingestion domain | Darryl | File / storage / schema / search / workflow / indexer service contracts, manifest ingestion, DAG orchestration, TNO loader patterns, status polling, search-after-ingest verify |
+| ADME/OSDU integrations | Kevin | Connect to ADME APIs, model backend services, handle domain logic (non-ingestion) |
 | Azure auth & deployment | Scott | Entra ID login, app configuration, Azure deployment wiring |
 | Code review | Satya | Review PRs, validate architecture, enforce sequencing |
 | Testing | Charlie | Write tests, find edge cases, verify fixes |
