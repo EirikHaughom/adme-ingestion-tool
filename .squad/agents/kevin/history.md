@@ -145,3 +145,15 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Per Mariel's explicit instruction the endpoint label is the f-string `f'members.{object_id}.groups'` (carries the actual OID). This diverges from Satya's note about a literal `{oid}` placeholder; followed Mariel because she's the requester and the task statement called it out specifically.
 - `object_id` validation matches the existing `token` empty-check pattern: ValueError on empty/whitespace before any HTTP work. `fetch_groups` and `GROUPS_PATH` untouched.
 - Tests and page rewire deliberately not touched — Charlie and Judson own those. ruff/mypy clean on both edited files.
+
+## Learnings
+
+### 2026-05-06: Ingestion MVP services landed
+- Shipped three new modules per Satya's locked contract:
+  - `app/models/osdu.py` (104 LOC): `WorkflowStatus` StrEnum, `parse_workflow_status` (case-insensitive, whitespace-trimmed; running/in progress/in_progress/submitted/queued -> IN_PROGRESS, finished/success/succeeded/completed -> FINISHED, failed/error -> FAILED, else UNKNOWN), and frozen dataclasses `WorkflowRunResult`, `LegalTagCheckResult`, `SearchResult`.
+  - `app/services/ingestion.py` (~560 LOC): constants `LEGAL_TAGS_PATH`, `WORKFLOW_INGEST_RUN_PATH`, `WORKFLOW_RUN_STATUS_PATH_TEMPLATE`, `TNO_SAMPLE_MANIFEST` (Darryl's payload, placeholders preserved verbatim), `TNO_SAMPLE_DESCRIPTION`. Public functions: `substitute_manifest_placeholders` (pure; ValueError on blank inputs OR unresolved `{{...}}` after substitution), `validate_manifest_json` (pure; first-failure-wins rule chain), `check_legal_tag`, `submit_manifest`, `get_workflow_status`. Curated 404 message on legal tag check; `submit_manifest` 2xx-without-runId is surfaced as ok=False with a curated message. Internal `_call` shared by `_call_workflow`/`_call_legal` to keep the entitlements-pattern parity without importing across services.
+  - `app/services/verification.py` (~250 LOC): `SEARCH_QUERY_PATH`, `DEFAULT_SEARCH_LIMIT=100`, `search_records_by_kind` POSTing exactly `{"kind": kind, "limit": limit, "offset": 0}`. Records list filtered to dict items only (defensive, mirrors entitlements `_extract_groups`). `totalCount` preferred over `len(results)`; falls back when missing.
+- All three modules duplicate the entitlements helpers (`_elapsed_ms`, `_extract_correlation_id`, `_try_parse_json`, `_error_message_from_json`, `_truncate`) verbatim per Satya's "no shared module yet" call - refactor is a v2 follow-up.
+- 5s timeout, `allow_redirects=False`, Bearer + data-partition-id + Accept JSON headers, Content-Type only on POST. ValueError on invalid connection / blank token / blank function-specific args. Transport failures (Timeout / RequestException / broad Exception) return ok=False with http_status=None and never raise.
+- Quality gates green: ruff clean, mypy strict (disallow_untyped_defs) clean, round-trip sanity check (substitute -> validate on TNO sample) returns True.
+- Did NOT modify entitlements.py or any of Judson's files. Did NOT touch `app/pages/3_??_Ingestion.py`.

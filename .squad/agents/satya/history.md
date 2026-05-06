@@ -126,3 +126,12 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Page: identity card derived from my-groups response (memberEmail + desId/OID); my-groups primary card; all-groups demoted to secondary expander; pre-flight guard renders friendly error and skips HTTP when OID missing.
 - History label for the per-user call is the literal string `members.{oid}.groups` — keeps chart axes/session history free of per-user OIDs.
 - Handoff: Kevin (service + token_utils), Judson (page rewire), Charlie (delete member-self tests, add token_utils + my-groups tests, update page tests). No Scott, no new deps.
+
+## Learnings
+
+### 2026-05-06: Ingestion MVP contract locked
+- Wrote .squad/decisions/inbox/satya-ingestion-mvp-contract.md covering services (ingestion.py, erification.py), models (osdu.py), page (3_📥_Ingestion.py), and tests.
+- Locked polling: native Streamlit `st.rerun()` + `time.sleep` ladder (2s/5s/10s, 30-min timeout) with a manual "Refresh status now" escape hatch. Rejected `st.autorefresh` / `streamlit-extras` to keep deps unchanged.
+- Locked verification as the truth source: workflow `finished` is never reported as success in the UI until `search_records_by_kind` returns. Indexing-delay mitigation is 3 retries × 5s.
+- Reused entitlements patterns verbatim (per-call _call_* helper, 5s timeout, frozen result dataclasses, correlation-id probe, error-body extraction). New modules duplicate the helpers rather than import them — refactor to a shared module is a deliberate v2.
+- Ownership split: Kevin ships models + services, Judson ships page (validate-only path can start before Kevin's HTTP code lands because `validate_manifest_json` is pure), Charlie writes tests against the locked signatures, Darryl supplies `TNO_SAMPLE_MANIFEST` content.
