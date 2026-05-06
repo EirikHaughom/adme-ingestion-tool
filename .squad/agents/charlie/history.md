@@ -76,3 +76,21 @@ Charlie (Tester) owns test strategy, acceptance criteria, and quality gates for 
   adapted to its SQLAlchemy repository classes and UI bridge.
 - Validation: `python -m pytest --no-cov -q` passed with 101 passed and 1
   skipped; configured `python -m pytest`, Ruff, and mypy also passed.
+
+## 2026-05-06T06:44:31.579Z: PR #9 Storage Alternative Comparison
+
+**Verdict:** Local implementation satisfies all 8 acceptance criteria. PR #9 covers profile persistence only; misses PostgreSQL, migrations, health persistence, and failure-mode testing.
+
+**Acceptance criteria verification:**
+1. ✓ SQLite default at `.adme/adme.db`
+2. ✓ PostgreSQL via `DATABASE_URL`
+3. ✓ No PGlite
+4. ✓ SQLAlchemy/Alembic boundary under `app/storage`
+5. ✓ No persisted secrets
+6. ✓ SQLite auto-migrates; PostgreSQL revision check
+7. ✓ Profile/health hydration in Streamlit pages
+8. ✓ Test coverage for migration, round-trip, secret rejection, health atomicity
+
+**PR #9 gaps:** Profile persistence only; missing PostgreSQL production validation, migration verification, health persistence and atomicity, and failure-mode testing.
+
+**Recommendation:** STICK WITH LOCAL; close PR #9 as superseded. All test gates passing (101 passed, 1 skipped).

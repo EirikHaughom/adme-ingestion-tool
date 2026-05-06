@@ -123,3 +123,17 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Settings/Welcome hydrate persisted profile and latest health run without touching auth state; user impersonation and client_secret remain session-only.
 - Coordinator validation passed: pytest 101 passed/1 skipped, ruff clean, mypy clean.
 - Non-blocking follow-ups: storage_bridge reflective dispatch (_first_callable / _accepts_keyword) is more elastic than needed now that app.storage exports a stable API; consider trimming once no alternate storage backends are anticipated. load_persisted_connection_state skips restoring saved health when a session connection already exists - acceptable but worth a Judson UX pass later.
+
+## 2026-05-06T06:44:31.579Z: PR #9 Storage Comparison Review
+
+**Finding:** Local implementation satisfies all acceptance criteria with strong secret rejection/redaction and complete models. PR #9 adds surface features but lacks PostgreSQL production path and complete health/migration coverage.
+
+**Rationale:**
+- Local: SQLAlchemy 2.x + Alembic boundary at pp/storage/ package level
+- SQLite default + PostgreSQL production fully specified
+- Secret rejection strong: client_secret rejected before persistence
+- StorageConfig.url redacted for safety
+- Profile and health models complete
+- All tests passing (101 passed, 1 skipped)
+
+**Recommendation:** STICK WITH LOCAL; close PR #9 as superseded. Cherry-pick test isolation and raw-bytes secret assertions if beneficial.

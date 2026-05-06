@@ -23,6 +23,7 @@
 - 2026-05-05T19:48:42.932+02:00: Proposed backend storage modules are `app\storage\config.py`, `engine.py`, `models.py`, `session.py`, `repositories\connection_profiles.py`, and `repositories\health_runs.py`, with Alembic metadata sourced from the storage models.
 - 2026-05-05T20:00:00.287+02:00: Implemented `app\storage\` with SQLAlchemy 2.x repositories, Alembic migrations, SQLite auto-migration, PostgreSQL revision checks, URL redaction, and explicit rejection of secret-bearing connection profiles.
 - 2026-05-05T20:00:00.287+02:00: Alembic's required `app.storage.migrations` package owns migration helpers because Python cannot expose both an importable `app.storage.migrations` module and a same-named migrations package.
+- 2026-05-06T06:44:31.579Z: Reviewed PR #9 alternative storage implementation; local version provides clear SQLAlchemy/Alembic boundary, PostgreSQL production path, strong secret rejection/redaction, and complete profile+health model. Recommended STICK WITH LOCAL and close PR #9. Cherry-pick test DB override and raw secret checks if beneficial.
 
 ## 2026-04-24 Issue #2 Contract Corrections (Revision Batch)
 - Fixed Indexer probe contract: removed mutating GET /api/indexer/v2/reindex, replaced with read-only GET /api/indexer/v2/readiness_check
