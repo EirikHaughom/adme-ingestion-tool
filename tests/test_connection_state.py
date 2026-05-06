@@ -300,6 +300,8 @@ def test_ensure_session_defaults_hydrates_from_active_stored_connection(
     assert isinstance(hydrated, ADMEConnection)
     assert hydrated.endpoint == stored.endpoint
     assert hydrated.data_partition_id == stored.data_partition_id
+    # Stored connection had no client_secret, so the keyring lookup misses
+    # and the field hydrates as the empty string.
     assert hydrated.client_secret == ""
 
 
@@ -381,5 +383,6 @@ def test_save_connection_persists_to_store_and_marks_active(
     assert persisted is not None
     assert persisted.endpoint == new_connection.endpoint
     assert persisted.auth_method == AuthMethod.SERVICE_PRINCIPAL
-    # Secret must be dropped at the persistence boundary.
-    assert persisted.client_secret == ""
+    # Secret is now persisted in the OS keyring (faked in tests),
+    # not in the SQLite file.
+    assert persisted.client_secret == "never-persisted"

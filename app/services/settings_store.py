@@ -42,6 +42,85 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH: Path = Path.home() / ".adme-ingestion-tool" / "settings.db"
 ENV_DB_PATH = "ADME_SETTINGS_DB"
+KEYRING_SERVICE_NAME = "adme-ingestion-tool"
+
+
+def _store_secret(name: str, secret: str | None) -> None:
+    """Persist *secret* under *name* in the OS keyring.
+
+    A ``None`` or empty *secret* deletes any existing entry.  All keyring
+    interaction is best-effort: if the backend is unavailable or the
+    ``keyring`` package is not installed we log and re-raise as
+    :class:`SettingsStoreError` so callers can surface a clear "secret was
+    not persisted" message to the operator.
+    """
+    try:
+        import keyring  # noqa: PLC0415 — lazy so module import never breaks
+        from keyring.errors import (  # noqa: PLC0415
+            PasswordDeleteError,
+        )
+    except ImportError as exc:
+        msg = (
+            "The 'keyring' package is not installed; client_secret cannot be "
+            "persisted in the OS credential store."
+        )
+        logger.warning("settings_store: %s (%s)", msg, exc)
+        raise SettingsStoreError(msg) from exc
+
+    if secret:
+        try:
+            keyring.set_password(KEYRING_SERVICE_NAME, name, secret)
+        except Exception as exc:  # noqa: BLE001 — keyring backends raise broadly
+            msg = (
+                f"Could not write client_secret for connection {name!r} to "
+                "the OS keyring; secret was not persisted."
+            )
+            logger.warning("settings_store: %s (%s)", msg, exc)
+            raise SettingsStoreError(msg) from exc
+        return
+
+    try:
+        keyring.delete_password(KEYRING_SERVICE_NAME, name)
+    except PasswordDeleteError:
+        # "No password to delete" is a valid no-op — the secret was already
+        # absent (e.g. user-impersonation connection, or first-time save).
+        pass
+    except Exception as exc:  # noqa: BLE001
+        msg = (
+            f"Could not clear client_secret for connection {name!r} from "
+            "the OS keyring."
+        )
+        logger.warning("settings_store: %s (%s)", msg, exc)
+        raise SettingsStoreError(msg) from exc
+
+
+def _load_secret(name: str) -> str | None:
+    """Return the stored client_secret for *name*, or ``None``.
+
+    Returns ``None`` if the keyring package is missing, the backend is
+    unavailable, or no entry exists.  Hydration is best-effort by design —
+    callers fall back to an empty secret and the operator can re-enter it.
+    """
+    try:
+        import keyring  # noqa: PLC0415
+    except ImportError as exc:
+        logger.warning(
+            "settings_store: 'keyring' package missing; cannot load "
+            "client_secret for %r (%s)",
+            name,
+            exc,
+        )
+        return None
+    try:
+        return keyring.get_password(KEYRING_SERVICE_NAME, name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "settings_store: could not read client_secret for %r from "
+            "the OS keyring (%s)",
+            name,
+            exc,
+        )
+        return None
 
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
@@ -126,6 +205,7 @@ def _row_to_connection(row: sqlite3.Row) -> ADMEConnection:
         logger.error("settings_store: %s", msg)
         raise SettingsStoreError(msg) from exc
     token_scope = row["token_scope"] or ADME_RESOURCE_SCOPE
+    secret = _load_secret(row["name"]) or ""
     return ADMEConnection(
         endpoint=row["endpoint"],
         tenant_id=row["tenant_id"],
@@ -133,7 +213,7 @@ def _row_to_connection(row: sqlite3.Row) -> ADMEConnection:
         data_partition_id=row["data_partition_id"],
         token_scope=token_scope,
         auth_method=auth_method,
-        client_secret="",
+        client_secret=secret,
     )
 
 
@@ -174,8 +254,11 @@ def save_connection(
 ) -> None:
     """Insert or update a saved connection by name.
 
-    ``client_secret`` is **never** written.  Service-principal operators must
-    re-enter the secret per session until encryption-at-rest lands.
+    The SQLite row never contains ``client_secret`` (schema unchanged); the
+    secret is written separately to the OS keyring after the DB write
+    succeeds.  If keyring persistence fails the DB row remains, but we raise
+    :class:`SettingsStoreError` so the operator knows the secret was not
+    saved and must be re-entered next session.
     """
     if not name:
         msg = "Cannot save a connection without a name."
@@ -219,6 +302,11 @@ def save_connection(
             raise
         conn.execute("COMMIT")
 
+    # Persist (or clear) the client_secret in the OS keyring AFTER the DB
+    # write so we never leave an orphan secret pointing at a connection that
+    # failed to save.
+    _store_secret(name, connection.client_secret or None)
+
 
 def delete_connection(
     name: str,
@@ -228,6 +316,19 @@ def delete_connection(
     if not name:
         return
     initialize_store(db_path)
+    # Clear the keyring entry FIRST so a DB failure does not leave an
+    # orphan secret pointing at a now-missing row.  ``_store_secret`` with
+    # ``None`` swallows "no password to delete".
+    try:
+        _store_secret(name, None)
+    except SettingsStoreError as exc:
+        # Keyring failure should not block DB cleanup; log and continue.
+        logger.warning(
+            "settings_store: keyring cleanup for %r failed (%s); proceeding "
+            "with DB delete",
+            name,
+            exc,
+        )
     with _connect(db_path) as conn:
         conn.execute("DELETE FROM connections WHERE name = ?", (name,))
 

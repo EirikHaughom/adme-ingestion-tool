@@ -98,8 +98,10 @@ def test_round_trip_save_then_load_returns_equivalent_connection(
     assert loaded.auth_method == original.auth_method
 
 
-def test_save_connection_drops_client_secret(db_path: Path) -> None:
-    """client_secret must NEVER be persisted, regardless of auth_method."""
+def test_save_connection_keeps_client_secret_out_of_sqlite(
+    db_path: Path,
+) -> None:
+    """client_secret must NEVER land in the SQLite file; it lives in the OS keyring."""
     sp_with_secret = _make_connection(
         auth_method=AuthMethod.SERVICE_PRINCIPAL,
         client_secret="super-secret-value",
@@ -109,8 +111,9 @@ def test_save_connection_drops_client_secret(db_path: Path) -> None:
     loaded = settings_store.load_connection("sp")
 
     assert loaded is not None
-    assert loaded.client_secret == ""
-    # Defense in depth: confirm the raw bytes never landed on disk.
+    # Secret is round-tripped via the (fake) keyring fixture.
+    assert loaded.client_secret == "super-secret-value"
+    # Defense in depth: confirm the raw bytes never landed in the DB file.
     assert b"super-secret-value" not in db_path.read_bytes()
 
 
@@ -134,6 +137,8 @@ def test_list_connections_returns_pairs_ordered_by_name(db_path: Path) -> None:
     assert [name for name, _ in pairs] == ["alpha", "mike", "zeta"]
     for _, conn in pairs:
         assert isinstance(conn, ADMEConnection)
+        # No keyring entry was ever written for these user-impersonation
+        # connections, so client_secret hydrates as the empty string.
         assert conn.client_secret == ""
 
 
@@ -251,7 +256,7 @@ def test_resaving_active_connection_preserves_active_flag(db_path: Path) -> None
 def test_service_principal_auth_method_round_trips(db_path: Path) -> None:
     sp = _make_connection(
         auth_method=AuthMethod.SERVICE_PRINCIPAL,
-        client_secret="will-be-dropped",
+        client_secret="vault-resident",
     )
 
     settings_store.save_connection("sp", sp)
@@ -259,4 +264,5 @@ def test_service_principal_auth_method_round_trips(db_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.auth_method == AuthMethod.SERVICE_PRINCIPAL
-    assert loaded.client_secret == ""
+    # client_secret round-trips via the OS keyring (faked in tests).
+    assert loaded.client_secret == "vault-resident"

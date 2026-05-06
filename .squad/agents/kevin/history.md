@@ -108,3 +108,22 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+## Learnings
+
+### 2026-05-06 — client_secret persistence via OS keyring
+- Lifted Satya's secret never persisted exclusion. SQLite schema unchanged; secret now lives in the OS keyring (Windows Credential Manager / macOS Keychain / Secret Service on Linux), keyed by `(KEYRING_SERVICE_NAME='adme-ingestion-tool', connection_name)`.
+- Added `keyring>=25.0` to `requirements.txt` (runtime, not dev).
+- New private helpers in `app/services/settings_store.py`: `_store_secret(name, secret)` and `_load_secret(name)`. Both lazy-import `keyring` so module import never fails on machines without the package.
+- `_store_secret` raises `SettingsStoreError` on backend failure so save_connection can surface 'secret not persisted' to the operator. `_load_secret` swallows everything and returns None — hydration is best-effort.
+- `save_connection`: DB row first, then `_store_secret` AFTER commit so rollback never orphans a secret. Empty secret → delete_password (PasswordDeleteError treated as valid no-op).
+- `delete_connection`: keyring entry cleared BEFORE the DB delete (opposite ordering, same orphan-prevention). Keyring failure here is logged, not raised.
+- `_row_to_connection` now hydrates `client_secret` via `_load_secret` — so list_connections, load_connection, and ensure_session_defaults all transparently restore the secret with no change to `app/connection_state.py`.
+
+### 2026-05-06 — Test isolation gotcha
+- Autouse `_isolate_settings_db` only covers SQLite. Without an autouse keyring fake, every existing test calling save_connection would hit the real Windows Credential Manager. Added autouse `_isolate_keyring` in `tests/conftest.py` that installs an in-memory fake keyring module into sys.modules.
+- Three pre-existing tests asserted `client_secret == ''` after round-trip — encoded the old drop-on-save contract. Updated: defense-in-depth check (secret bytes absent from SQLite file) preserved; secret IS now expected back from the faked keyring.
+- New file `tests/test_settings_store_keyring.py` covers: round-trip, empty-secret-deletes, no-entry-noop, delete clears both stores, backend exception -> None, missing package -> None, set failure -> SettingsStoreError + DB row preserved.
+
+### Counts
+- Targeted suite (settings_store + keyring + connection_state): 45 passed.
+- Full suite: 115 passed (was 105; +10 new keyring tests).
