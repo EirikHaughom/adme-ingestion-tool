@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class WorkflowStatus(StrEnum):
@@ -104,3 +105,87 @@ class SearchResult:
     latency_ms: float = 0.0
     correlation_id: str | None = None
     error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegalTag:
+    """A single legal tag as returned by the ADME Legal service.
+
+    ``is_valid`` mirrors the optional server-supplied ``isValid`` flag
+    on list responses; ``None`` means the server did not include it.
+    """
+
+    name: str
+    description: str
+    properties: dict[str, Any]
+    is_valid: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegalTagPropertiesSpec:
+    """Allowed values for the partition, used to populate dropdowns.
+
+    Server-key normalization is owned by
+    :mod:`app.services.legal_tags`. Country fields accept both the
+    documented dict shape (alpha-2 → display name) and the legacy list
+    shape; classification fields likewise accept either spelling.
+    """
+
+    country_of_origin: list[str] = field(default_factory=list)
+    other_relevant_data_countries: list[str] = field(default_factory=list)
+    security_classifications: list[str] = field(default_factory=list)
+    export_classifications: list[str] = field(default_factory=list)
+    personal_data_types: list[str] = field(default_factory=list)
+    data_types: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class LegalTagListResult:
+    """Outcome of ``GET /api/legal/v1/legaltags``."""
+
+    items: list[LegalTag] = field(default_factory=list)
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegalTagDetailResult:
+    """Outcome of GET-one / POST / PUT against the Legal service."""
+
+    tag: LegalTag | None
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegalTagOperationResult:
+    """Outcome of ``DELETE /api/legal/v1/legaltags/{name}``."""
+
+    name: str
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegalTagPropertiesResult:
+    """Outcome of ``GET /api/legal/v1/legaltags:properties``."""
+
+    spec: LegalTagPropertiesSpec | None
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None

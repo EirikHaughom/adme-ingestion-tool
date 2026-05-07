@@ -29,12 +29,33 @@ from app.models.osdu import (
     WorkflowStatus,
     parse_workflow_status,
 )
+from app.services.legal_tags import LEGAL_TAGS_PATH
 
 logger = logging.getLogger(__name__)
 
 INGESTION_TIMEOUT_SECONDS = 5
 
-LEGAL_TAGS_PATH = "/api/legal/v1/legaltags"
+# ``LEGAL_TAGS_PATH`` is owned by :mod:`app.services.legal_tags` and
+# re-exported here so existing callers keep working. Single source of
+# truth lives in the legal_tags module.
+__all__ = [
+    "INGESTION_TIMEOUT_SECONDS",
+    "LEGAL_TAGS_PATH",
+    "SAMPLE_PLACEHOLDER_ACL_OWNERS",
+    "SAMPLE_PLACEHOLDER_ACL_VIEWERS",
+    "SAMPLE_PLACEHOLDER_DATA_PARTITION_ID",
+    "SAMPLE_PLACEHOLDER_LEGAL_TAG",
+    "TNO_SAMPLE_DESCRIPTION",
+    "TNO_SAMPLE_MANIFEST",
+    "WORKFLOW_INGEST_RUN_PATH",
+    "WORKFLOW_RUN_STATUS_PATH_TEMPLATE",
+    "check_legal_tag",
+    "get_workflow_status",
+    "submit_manifest",
+    "substitute_manifest_placeholders",
+    "validate_manifest_json",
+]
+
 WORKFLOW_INGEST_RUN_PATH = (
     "/api/workflow/v1/workflow/Osdu_ingest/workflowRun"
 )

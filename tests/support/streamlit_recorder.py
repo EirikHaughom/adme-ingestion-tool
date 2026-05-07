@@ -11,7 +11,24 @@ Extensions added for the ingestion page (``app/pages/3_📥_Ingestion.py``):
   so the page's ``status_box.update(...)`` calls inside ``with status_box:``
   blocks are recorded.
 
-Both extensions are minimal and append-only — existing tests keep working.
+Extensions added for the legal tags page (``app/pages/4_🏷️_Legal_Tags.py``):
+
+- ``toggle(label, value=False, ...)`` returns the configured widget value
+  (or ``value`` default) so the "Show only valid tags" toggle's bool flow
+  is observable.
+- ``selectbox(label, options, index=0, ...)`` returns the configured widget
+  value or ``options[index]``; used both for the table-row selection and the
+  create-form classification dropdowns.
+- ``multiselect(label, options, default=None, ...)`` returns the configured
+  widget value (list) or ``default``; used for country dropdowns.
+- ``date_input(label, value=None, ...)`` returns the configured widget value
+  or ``value``; used for the create-form expiration field.
+- ``text_area(label, value="", ...)`` returns the configured widget value or
+  ``value``; used for the description fields.
+
+All five lookups consult ``self.widget_values[label]`` first, then fall back
+to the page's supplied default. Existing tests keep working — these are
+additive on top of the ``__getattr__`` no-op fallback.
 """
 
 from __future__ import annotations
@@ -194,6 +211,88 @@ class StreamlitRecorder(ModuleType):
         if kwargs.get("disabled"):
             return False
         return self.button_responses.get(label, False)
+
+    def toggle(
+        self, label: str, value: bool = False, **kwargs: Any
+    ) -> bool:
+        """Record a toggle and return the configured widget value (bool)."""
+        self.calls.append(
+            StreamlitCall(
+                name="toggle",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return bool(self.widget_values.get(label, value))
+
+    def selectbox(
+        self,
+        label: str,
+        options: list[Any],
+        index: int = 0,
+        **kwargs: Any,
+    ) -> Any:
+        """Record a selectbox and return the configured value or options[index]."""
+        self.calls.append(
+            StreamlitCall(
+                name="selectbox",
+                args=(label, options),
+                kwargs={"index": index, **kwargs},
+            )
+        )
+        if label in self.widget_values:
+            return self.widget_values[label]
+        if not options:
+            return None
+        try:
+            return options[index]
+        except (IndexError, TypeError):
+            return options[0] if options else None
+
+    def multiselect(
+        self,
+        label: str,
+        options: list[Any],
+        default: list[Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
+        """Record a multiselect and return the configured value (list)."""
+        self.calls.append(
+            StreamlitCall(
+                name="multiselect",
+                args=(label, options),
+                kwargs={"default": default, **kwargs},
+            )
+        )
+        if label in self.widget_values:
+            return list(self.widget_values[label])
+        return list(default) if default else []
+
+    def date_input(
+        self, label: str, value: Any = None, **kwargs: Any
+    ) -> Any:
+        """Record a date_input and return the configured value or default."""
+        self.calls.append(
+            StreamlitCall(
+                name="date_input",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return self.widget_values.get(label, value)
+
+    def text_area(
+        self, label: str, value: str = "", **kwargs: Any
+    ) -> str:
+        """Record a text_area and return the configured value or default."""
+        self.calls.append(
+            StreamlitCall(
+                name="text_area",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return str(self.widget_values.get(label, value))
 
     def __getattr__(self, name: str) -> Callable[..., None]:
         """Return a recorder for any accessed Streamlit API function."""

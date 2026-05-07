@@ -135,3 +135,11 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Locked verification as the truth source: workflow `finished` is never reported as success in the UI until `search_records_by_kind` returns. Indexing-delay mitigation is 3 retries × 5s.
 - Reused entitlements patterns verbatim (per-call _call_* helper, 5s timeout, frozen result dataclasses, correlation-id probe, error-body extraction). New modules duplicate the helpers rather than import them — refactor to a shared module is a deliberate v2.
 - Ownership split: Kevin ships models + services, Judson ships page (validate-only path can start before Kevin's HTTP code lands because `validate_manifest_json` is pure), Charlie writes tests against the locked signatures, Darryl supplies `TNO_SAMPLE_MANIFEST` content.
+
+### 2026-05-07 — Legal Tags page MVP contract locked
+
+- Wrote .squad/decisions/inbox/satya-legal-tags-page-contract.md covering app/services/legal_tags.py (6 functions + ported _call_legal helper), 5 new dataclasses on app/models/osdu.py, app/pages/4_🏷️_Legal_Tags.py (single-page layout, no tabs), and full test scope across service/page/model.
+- LEGAL_TAGS_PATH single source of truth: defined in legal_tags.py, ingestion.py imports it. Kevin authorized to also extract a shared _http.py if mechanically clean; otherwise accept duplication for v1.
+- Locked outbound properties payload key shape (camelCase server keys) so create/update payload is unambiguous regardless of whether page or service builds the dict.
+- Section 7 specifies three fallback strategies behind feature flags so Judson + Charlie do NOT block on Darryl's research: (a) update-as-delete-then-recreate if PUT unsupported, (b) free-text form if properties endpoint 404s, (c) Deactivate relabel if DELETE only sets isValid=False.
+- Kevin can start immediately on signatures + dataclasses; Judson can scaffold the page UX + session keys against the doc in parallel; Charlie can write dataclass tests immediately, service tests after Kevin lands signatures, page tests after session-key contract lands.
