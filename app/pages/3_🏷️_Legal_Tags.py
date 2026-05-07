@@ -349,9 +349,10 @@ def _refresh_list(connection: ADMEConnection, token: str) -> None:
     valid_filter: bool | None = (
         True if st.session_state.get(SHOW_VALID_ONLY_KEY, False) else None
     )
-    result: LegalTagListResult = list_legal_tags(
-        connection, token, valid=valid_filter
-    )
+    with st.spinner("Loading legal tags…"):
+        result: LegalTagListResult = list_legal_tags(
+            connection, token, valid=valid_filter
+        )
     label = LABEL_LIST + (":valid" if valid_filter is True else "")
     _append_history(label, result.latency_ms, result.http_status, result.ok)
     if result.ok:
@@ -366,9 +367,10 @@ def _refresh_list(connection: ADMEConnection, token: str) -> None:
 
 def _refresh_properties(connection: ADMEConnection, token: str) -> None:
     """Call get_legal_tag_properties; on 404, set fallback flag."""
-    result: LegalTagPropertiesResult = get_legal_tag_properties(
-        connection, token
-    )
+    with st.spinner("Loading legal tag properties…"):
+        result: LegalTagPropertiesResult = get_legal_tag_properties(
+            connection, token
+        )
     _append_history(
         LABEL_PROPERTIES, result.latency_ms, result.http_status, result.ok
     )

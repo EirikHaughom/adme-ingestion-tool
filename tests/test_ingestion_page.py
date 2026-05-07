@@ -296,6 +296,48 @@ def _patch_services(
         page_module, "search_records_by_kind", fake_search
     )
 
+    # Stub the dropdown-population calls so the autorun-once option load
+    # can't make real HTTP requests in tests. Returning ``ok=False`` causes
+    # the page to fall back to ``st.text_input`` for each field, which is
+    # what these tests assert against via direct ``session_state`` writes.
+    from app.models.connection import EntitlementsCallResult
+    from app.models.osdu import LegalTagListResult
+
+    def fake_list_legal_tags(
+        _connection: ADMEConnection,
+        _token: str,
+        *,
+        valid: bool | None = None,
+    ) -> LegalTagListResult:
+        del valid
+        return LegalTagListResult(
+            items=[],
+            ok=False,
+            http_status=None,
+            latency_ms=0.0,
+            correlation_id=None,
+            error_message="stubbed in tests",
+            raw_response=None,
+        )
+
+    def fake_fetch_groups(
+        _connection: ADMEConnection, _token: str
+    ) -> EntitlementsCallResult:
+        return EntitlementsCallResult(
+            endpoint="groups",
+            path="/api/entitlements/v2/groups",
+            ok=False,
+            http_status=None,
+            latency_ms=0.0,
+            correlation_id=None,
+            error_message="stubbed in tests",
+            raw_response=None,
+            data=None,
+        )
+
+    monkeypatch.setattr(page_module, "list_legal_tags", fake_list_legal_tags)
+    monkeypatch.setattr(page_module, "fetch_groups", fake_fetch_groups)
+
     def fake_sleep(seconds: float) -> None:
         spy.sleep.append(seconds)
 

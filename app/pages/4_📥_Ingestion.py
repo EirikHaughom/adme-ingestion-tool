@@ -37,6 +37,7 @@ from app.models.osdu import (  # noqa: E402
     WorkflowStatus,
 )
 from app.services.auth import AuthenticationError, get_token  # noqa: E402
+from app.services.entitlements import fetch_groups  # noqa: E402
 from app.services.ingestion import (  # noqa: E402
     TNO_SAMPLE_DESCRIPTION,
     TNO_SAMPLE_MANIFEST,
@@ -46,6 +47,7 @@ from app.services.ingestion import (  # noqa: E402
     substitute_manifest_placeholders,
     validate_manifest_json,
 )
+from app.services.legal_tags import list_legal_tags  # noqa: E402
 from app.services.verification import search_records_by_kind  # noqa: E402
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
@@ -74,6 +76,12 @@ VERIFICATION_RETRIES_KEY = "ingestion_verification_retries"
 LAST_LEGAL_TAG_RESULT_KEY = "ingestion_last_legal_tag_result"
 LAST_SUBMIT_RESULT_KEY = "ingestion_last_submit_result"
 LAST_CORRELATION_ID_KEY = "ingestion_last_correlation_id"
+
+# --- Dropdown option-cache keys (autorun-once load of legal tags + groups) -
+INGESTION_OPTIONS_AUTORUN_KEY = "ingestion_options_autorun_done"
+INGESTION_LEGAL_TAG_OPTIONS_KEY = "ingestion_legal_tag_options"
+INGESTION_ACL_OWNER_OPTIONS_KEY = "ingestion_acl_owner_options"
+INGESTION_ACL_VIEWER_OPTIONS_KEY = "ingestion_acl_viewer_options"
 
 HISTORY_DISPLAY_LIMIT = 20
 
@@ -162,6 +170,11 @@ def _ensure_page_defaults() -> None:
     st.session_state.setdefault(LAST_CORRELATION_ID_KEY, None)
     st.session_state.setdefault(INGESTION_LAST_ERROR_KEY, None)
 
+    st.session_state.setdefault(INGESTION_OPTIONS_AUTORUN_KEY, False)
+    st.session_state.setdefault(INGESTION_LEGAL_TAG_OPTIONS_KEY, None)
+    st.session_state.setdefault(INGESTION_ACL_OWNER_OPTIONS_KEY, None)
+    st.session_state.setdefault(INGESTION_ACL_VIEWER_OPTIONS_KEY, None)
+
 
 # ---------------------------------------------------------------------------
 # Pre-flight
@@ -249,32 +262,155 @@ def _acquire_token(connection: ADMEConnection) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _load_input_options(
+    connection: ADMEConnection, *, force: bool = False
+) -> None:
+    """Autorun-once load of legal tags + entitlement groups for dropdowns.
+
+    Populates ``INGESTION_LEGAL_TAG_OPTIONS_KEY``,
+    ``INGESTION_ACL_OWNER_OPTIONS_KEY``, and ``INGESTION_ACL_VIEWER_OPTIONS_KEY``
+    in session state. Each is set to a sorted ``list[str]`` on success or
+    ``None`` on transport / auth / parse failure so the input form can fall
+    back to a manual text input. The autorun guard
+    (``INGESTION_OPTIONS_AUTORUN_KEY``) ensures we only call ADME once per
+    session unless the operator clicks Refresh (``force=True``).
+    """
+    if not force and st.session_state.get(
+        INGESTION_OPTIONS_AUTORUN_KEY, False
+    ):
+        return
+
+    token = _acquire_token(connection)
+    if token is None:
+        # Mark autorun done so we don't retry every rerun while the operator
+        # is fixing their connection. They can still hit Refresh.
+        st.session_state[INGESTION_OPTIONS_AUTORUN_KEY] = True
+        return
+
+    # Legal tags
+    try:
+        with st.spinner("Loading legal tags…"):
+            legal_result = list_legal_tags(connection, token, valid=True)
+        if legal_result.ok and legal_result.items:
+            names = sorted(
+                {tag.name for tag in legal_result.items if tag.name}
+            )
+            st.session_state[INGESTION_LEGAL_TAG_OPTIONS_KEY] = (
+                names or None
+            )
+        else:
+            st.session_state[INGESTION_LEGAL_TAG_OPTIONS_KEY] = None
+    except Exception:  # noqa: BLE001 - never block the page on a load failure
+        st.session_state[INGESTION_LEGAL_TAG_OPTIONS_KEY] = None
+
+    # ACL owners + viewers (single groups call, partitioned by suffix).
+    try:
+        with st.spinner("Loading entitlement groups…"):
+            groups_result = fetch_groups(connection, token)
+        owners, viewers = _partition_acl_groups(groups_result)
+        st.session_state[INGESTION_ACL_OWNER_OPTIONS_KEY] = owners or None
+        st.session_state[INGESTION_ACL_VIEWER_OPTIONS_KEY] = viewers or None
+    except Exception:  # noqa: BLE001 - never block the page on a load failure
+        st.session_state[INGESTION_ACL_OWNER_OPTIONS_KEY] = None
+        st.session_state[INGESTION_ACL_VIEWER_OPTIONS_KEY] = None
+
+    st.session_state[INGESTION_OPTIONS_AUTORUN_KEY] = True
+
+
+def _partition_acl_groups(groups_result: Any) -> tuple[list[str], list[str]]:
+    """Split a fetch_groups result into sorted owner / viewer email lists.
+
+    Returns ``([], [])`` on transport failure or unexpected payload shape.
+    Filters to OSDU-convention ACL groups: emails whose local-part starts
+    with ``data.`` and ends with ``.owners`` (owners) or ``.viewers``
+    (viewers). Other groups (users.*, service.*, etc.) are excluded.
+    """
+    if not getattr(groups_result, "ok", False):
+        return [], []
+    data = getattr(groups_result, "data", None)
+    if not isinstance(data, dict):
+        return [], []
+    raw_groups = data.get("groups")
+    if not isinstance(raw_groups, list):
+        return [], []
+
+    owners: set[str] = set()
+    viewers: set[str] = set()
+    for group in raw_groups:
+        if not isinstance(group, dict):
+            continue
+        email = group.get("email")
+        if not isinstance(email, str) or "@" not in email:
+            continue
+        local = email.split("@", 1)[0]
+        if not local.startswith("data."):
+            continue
+        if local.endswith(".owners"):
+            owners.add(email)
+        elif local.endswith(".viewers"):
+            viewers.add(email)
+    return sorted(owners), sorted(viewers)
+
+
 def _render_input_form(connection: ADMEConnection) -> None:
     """Render the legal-tag / ACL inputs and the TNO-sample expander."""
+    refresh_clicked = st.button(
+        "🔄 Refresh legal tags & groups",
+        key="ingestion_refresh_options",
+        help="Re-fetch legal tags and entitlement groups from ADME.",
+    )
+    if refresh_clicked:
+        _load_input_options(connection, force=True)
+        st.rerun()
+    else:
+        _load_input_options(connection)
+
+    legal_options = st.session_state.get(INGESTION_LEGAL_TAG_OPTIONS_KEY)
+    owner_options = st.session_state.get(INGESTION_ACL_OWNER_OPTIONS_KEY)
+    viewer_options = st.session_state.get(INGESTION_ACL_VIEWER_OPTIONS_KEY)
+
     cols = st.columns(3)
     with cols[0]:
-        st.text_input(
-            "Legal tag name",
-            key=LEGAL_TAG_KEY,
+        _render_option_field(
+            label="Legal tag name",
+            session_key=LEGAL_TAG_KEY,
+            options=legal_options,
             placeholder="opendes-tno-data",
-            help="Fully qualified legal tag name. The page checks the tag "
-                 "exists before submitting.",
+            help_text=(
+                "Fully qualified legal tag name. The page checks the tag "
+                "exists before submitting."
+            ),
+            empty_caption=(
+                "⚠️ Couldn't load legal tags — enter manually"
+            ),
         )
     with cols[1]:
-        st.text_input(
-            "ACL owners group",
-            key=ACL_OWNERS_KEY,
+        _render_option_field(
+            label="ACL owners group",
+            session_key=ACL_OWNERS_KEY,
+            options=owner_options,
             placeholder="data.default.owners@opendes.dataservices.energy",
-            help="Email of the entitlements group that should own these "
-                 "records.",
+            help_text=(
+                "Email of the entitlements group that should own these "
+                "records."
+            ),
+            empty_caption=(
+                "⚠️ Couldn't load groups — enter manually"
+            ),
         )
     with cols[2]:
-        st.text_input(
-            "ACL viewers group",
-            key=ACL_VIEWERS_KEY,
+        _render_option_field(
+            label="ACL viewers group",
+            session_key=ACL_VIEWERS_KEY,
+            options=viewer_options,
             placeholder="data.default.viewers@opendes.dataservices.energy",
-            help="Email of the entitlements group allowed to read these "
-                 "records.",
+            help_text=(
+                "Email of the entitlements group allowed to read these "
+                "records."
+            ),
+            empty_caption=(
+                "⚠️ Couldn't load groups — enter manually"
+            ),
         )
 
     if TNO_SAMPLE_MANIFEST:
@@ -302,6 +438,47 @@ def _render_input_form(connection: ADMEConnection) -> None:
     # Reference unused arg defensively so future linters don't complain about
     # the parameter; the connection is consumed by the rest of the page.
     _ = connection
+
+
+def _render_option_field(
+    *,
+    label: str,
+    session_key: str,
+    options: list[str] | None,
+    placeholder: str,
+    help_text: str,
+    empty_caption: str,
+) -> None:
+    """Render a selectbox when options loaded; otherwise a text_input fallback.
+
+    ``options=None`` means the API call failed or returned nothing useful;
+    the field falls back to ``st.text_input`` so the operator can type the
+    value manually. ``options=[...]`` is rendered as ``st.selectbox`` with a
+    leading blank entry so the field starts empty (the pre-pipeline gate
+    enforces non-empty values before submit).
+    """
+    if not options:
+        st.text_input(
+            label,
+            key=session_key,
+            placeholder=placeholder,
+            help=help_text,
+        )
+        st.caption(empty_caption)
+        return
+
+    current = str(st.session_state.get(session_key) or "")
+    final_options: list[str] = [""] + list(options)
+    if current and current not in final_options:
+        # Preserve any pre-existing value (e.g. a manual entry that was
+        # later refreshed) so streamlit doesn't error on a stale selection.
+        final_options.append(current)
+    st.selectbox(
+        label,
+        options=final_options,
+        key=session_key,
+        help=help_text,
+    )
 
 
 # ---------------------------------------------------------------------------
