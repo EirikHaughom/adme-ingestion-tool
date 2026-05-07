@@ -1,4 +1,4 @@
-"""Tests for the ADME manifest-ingestion page (`app/pages/3_📥_Ingestion.py`)."""
+"""Tests for the ADME manifest-ingestion page (`app/pages/4_📥_Ingestion.py`)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ INGESTION_PAGE_PATH = (
     Path(__file__).resolve().parents[1]
     / "app"
     / "pages"
-    / "3_📥_Ingestion.py"
+    / "4_📥_Ingestion.py"
 )
 
 # Locked session keys (per Judson's contract — Charlie tests these names).
@@ -320,9 +320,9 @@ def test_page_blocks_when_no_connection_configured(
     info_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("info")
     ]
-    assert any("Settings" in m for m in info_messages)
+    assert any("Instance Configuration" in m for m in info_messages)
     assert streamlit_recorder.calls_named("page_link"), (
-        "must link operators back to Settings"
+        "must link operators back to Instance Configuration"
     )
     assert spy.legal == []
     assert spy.submit == []
@@ -344,7 +344,7 @@ def test_page_blocks_user_impersonation_without_token(
     info_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("info")
     ]
-    assert any("Settings" in m for m in info_messages)
+    assert any("Instance Configuration" in m for m in info_messages)
     assert streamlit_recorder.calls_named("page_link")
     assert spy.legal == []
     assert spy.submit == []
@@ -368,7 +368,7 @@ def test_page_blocks_when_data_partition_missing(
     page_module.main()
 
     assert streamlit_recorder.calls_named("page_link"), (
-        "must point operators back to Settings"
+        "must point operators back to Instance Configuration"
     )
     assert spy.legal == []
     assert spy.submit == []

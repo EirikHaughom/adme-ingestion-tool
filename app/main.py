@@ -1,4 +1,9 @@
-"""Entry point for the ADME control plane Streamlit app."""
+"""Entry point for the ADME control plane Streamlit app.
+
+Uses ``st.navigation`` to group pages into a Setup / Operate hierarchy that
+mirrors the operator's journey: configure once (Setup) → run repeatedly
+(Operate).
+"""
 
 from __future__ import annotations
 
@@ -23,24 +28,22 @@ from app.connection_state import (  # noqa: E402
     summarize_health,
 )
 
-SETTINGS_PAGE_PATH = "pages/1_⚙️_Settings.py"
+INSTANCE_CONFIG_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 ENTITLEMENTS_PAGE_PATH = "pages/2_🔑_Entitlements.py"
+LEGAL_TAGS_PAGE_PATH = "pages/3_🏷️_Legal_Tags.py"
+INGESTION_PAGE_PATH = "pages/4_📥_Ingestion.py"
 
 
-def main() -> None:
-    st.set_page_config(
-        page_title="ADME Control Plane",
-        page_icon="⚡",
-        layout="wide",
-    )
+def _render_home() -> None:
+    """Render the home / welcome view (session connection status)."""
     st.title("ADME Control Plane")
     st.markdown(
         "Connect an Azure Data Manager for Energy instance, validate core "
         "OSDU services, and keep operators on the shortest path to action."
     )
     st.page_link(
-        SETTINGS_PAGE_PATH,
-        label="Open Settings",
+        INSTANCE_CONFIG_PAGE_PATH,
+        label="Open Instance Configuration",
         icon="⚙️",
     )
     st.page_link(
@@ -55,13 +58,16 @@ def main() -> None:
 
     st.subheader("Connection state")
     st.markdown(f"**Status:** {format_overall_state(overall_state)}")
-    st.caption("Need to change this session's connection? Open Settings.")
+    st.caption(
+        "Need to change this session's connection? "
+        "Open Instance Configuration."
+    )
 
     if connection is None or overall_state == "not_configured":
         st.warning("No ADME connection is configured for this session.")
         st.info(
-            "Go to Settings to add your ADME endpoint, identity details, "
-            "data partition, and validation workflow."
+            "Go to Instance Configuration to add your ADME endpoint, "
+            "identity details, data partition, and validation workflow."
         )
         return
 
@@ -114,6 +120,55 @@ def main() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+
+def main() -> None:
+    """Build the grouped navigation and run the selected page."""
+    st.set_page_config(
+        page_title="ADME Control Plane",
+        page_icon="⚡",
+        layout="wide",
+    )
+
+    home_page = st.Page(
+        _render_home,
+        title="Home",
+        icon="🏠",
+        default=True,
+    )
+    instance_config_page = st.Page(
+        INSTANCE_CONFIG_PAGE_PATH,
+        title="Instance Configuration",
+        icon="⚙️",
+    )
+    entitlements_page = st.Page(
+        ENTITLEMENTS_PAGE_PATH,
+        title="Entitlements",
+        icon="🔑",
+    )
+    legal_tags_page = st.Page(
+        LEGAL_TAGS_PAGE_PATH,
+        title="Legal Tags",
+        icon="🏷️",
+    )
+    ingestion_page = st.Page(
+        INGESTION_PAGE_PATH,
+        title="Ingestion",
+        icon="📥",
+    )
+
+    nav = st.navigation(
+        {
+            "": [home_page],
+            "Setup": [
+                instance_config_page,
+                entitlements_page,
+                legal_tags_page,
+            ],
+            "Operate": [ingestion_page],
+        }
+    )
+    nav.run()
 
 
 if __name__ == "__main__":

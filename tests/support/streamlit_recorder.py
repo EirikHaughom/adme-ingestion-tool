@@ -1,6 +1,6 @@
 """Test doubles for Streamlit page assertions.
 
-Extensions added for the ingestion page (``app/pages/3_📥_Ingestion.py``):
+Extensions added for the ingestion page (``app/pages/4_📥_Ingestion.py``):
 
 - ``columns(spec)`` returns a list of ``StreamlitContext`` instances so the
   page can do ``cols = st.columns(3); with cols[0]: ...``.  The page uses
@@ -11,7 +11,7 @@ Extensions added for the ingestion page (``app/pages/3_📥_Ingestion.py``):
   so the page's ``status_box.update(...)`` calls inside ``with status_box:``
   blocks are recorded.
 
-Extensions added for the legal tags page (``app/pages/4_🏷️_Legal_Tags.py``):
+Extensions added for the legal tags page (``app/pages/3_🏷️_Legal_Tags.py``):
 
 - ``toggle(label, value=False, ...)`` returns the configured widget value
   (or ``value`` default) so the "Show only valid tags" toggle's bool flow
@@ -97,6 +97,52 @@ class StreamlitStatusContext(StreamlitContext):
         self._recorder.calls.append(
             StreamlitCall(name="status_update", args=(), kwargs=kwargs)
         )
+
+
+class StreamlitPageMock:
+    """Stand-in for the object returned by ``st.Page``.
+
+    Holds the page target and metadata.  ``run()`` invokes the target when
+    it's a callable (the home page in ``app.main``); path-based pages are
+    not executed here because page tests load those scripts directly.
+    """
+
+    def __init__(self, page: Any, kwargs: dict[str, Any]) -> None:
+        self.page = page
+        self.kwargs = kwargs
+        self.title = kwargs.get("title")
+        self.icon = kwargs.get("icon")
+        self.default = bool(kwargs.get("default", False))
+
+    def run(self) -> None:
+        if callable(self.page):
+            self.page()
+
+
+class StreamlitNavigationMock:
+    """Stand-in for the object returned by ``st.navigation``.
+
+    ``run()`` invokes the default page (or first available) so ``main()``
+    tests still observe the home content's recorded calls.
+    """
+
+    def __init__(self, recorder: StreamlitRecorder, pages: Any) -> None:
+        self._recorder = recorder
+        self.pages = pages
+        if isinstance(pages, dict):
+            self.flat_pages: list[StreamlitPageMock] = [
+                p for plist in pages.values() for p in plist
+            ]
+        else:
+            self.flat_pages = list(pages)
+
+    def run(self) -> None:
+        for page in self.flat_pages:
+            if isinstance(page, StreamlitPageMock) and page.default:
+                page.run()
+                return
+        if self.flat_pages and isinstance(self.flat_pages[0], StreamlitPageMock):
+            self.flat_pages[0].run()
 
 
 class QueryParamsRecorder(dict[str, object]):
@@ -293,6 +339,37 @@ class StreamlitRecorder(ModuleType):
             )
         )
         return str(self.widget_values.get(label, value))
+
+    def Page(  # noqa: N802 (mirrors Streamlit's actual public name)
+        self, page: Any, **kwargs: Any
+    ) -> StreamlitPageMock:
+        """Record an ``st.Page`` registration and return a runnable mock.
+
+        The mock stores the page target (callable or path string) along with
+        any ``title``/``icon``/``default`` kwargs so ``st.navigation(...).run()``
+        can invoke the home page's callable during ``app.main.main()`` tests.
+        """
+        self.calls.append(
+            StreamlitCall(name="Page", args=(page,), kwargs=kwargs)
+        )
+        return StreamlitPageMock(page, kwargs)
+
+    def navigation(
+        self,
+        pages: Any,
+        **kwargs: Any,
+    ) -> StreamlitNavigationMock:
+        """Record an ``st.navigation`` call and return a mock with ``.run()``.
+
+        ``run()`` invokes the page marked ``default=True`` (or the first
+        registered page) when its target is a callable; path-based pages are
+        no-ops here because page-level tests load those scripts directly via
+        ``importlib.util.spec_from_file_location``.
+        """
+        self.calls.append(
+            StreamlitCall(name="navigation", args=(pages,), kwargs=kwargs)
+        )
+        return StreamlitNavigationMock(self, pages)
 
     def __getattr__(self, name: str) -> Callable[..., None]:
         """Return a recorder for any accessed Streamlit API function."""

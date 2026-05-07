@@ -82,11 +82,11 @@ TOKEN_SCOPE_HELP = (
 def main() -> None:
     """Render the operator settings flow for ADME connectivity."""
     st.set_page_config(
-        page_title="Settings · ADME Control Plane",
+        page_title="Instance Configuration · ADME Control Plane",
         page_icon="⚙️",
         layout="wide",
     )
-    st.title("Settings")
+    st.title("Instance Configuration")
     st.markdown(
         "Configure the ADME connection for this session and validate each "
         "OSDU service before starting an operator workflow."

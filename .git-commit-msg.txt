@@ -1,0 +1,43 @@
+refactor(nav): group pages into Setup/Operate, rename Settings → Instance Configuration
+
+Reorders the sidebar so it follows the operator's actual flow:
+
+  Setup    (configure once / infrequently)
+    1. ⚙️ Instance Configuration   (was: Settings)
+    2. 🔑 Entitlements
+    3. 🏷️ Legal Tags                (was page 4)
+  Operate
+    4. 📥 Ingestion                 (was page 3)
+
+Per Brady: legal tags belong before ingestion (they're a prerequisite),
+and "Settings" is too generic — operators are configuring an ADME
+instance, not app preferences.
+
+## Changes
+
+- Renamed pages/1_⚙️_Settings.py → pages/1_⚙️_Instance_Configuration.py
+- Renumbered Legal Tags 4 → 3, Ingestion 3 → 4
+- main.py: switched to st.navigation() with "Setup" / "Operate" sections
+  for true grouping in the sidebar
+- Updated all cross-page st.page_link() targets and "Settings" user-facing
+  strings → "Instance Configuration"
+- Updated README page list
+- Updated 7 tests for the new page-title / path strings (Kevin —
+  reviewer-rejection lockout: Judson did the rename, Kevin did the test
+  string updates)
+
+## Out of scope (not changed)
+
+- app/services/settings_store.py and KEYRING_SERVICE_NAME — keeping
+  these stable preserves all stored secrets across the rename
+- All session state keys (settings_*) — unchanged
+
+## Quality
+
+- 478 passed, 89% coverage
+- ruff clean (2 pre-existing unrelated violations untouched)
+- mypy strict clean
+
+Co-authored-by: Squad Team <judson@squad.local>
+Co-authored-by: Squad Team <charlie@squad.local>
+Co-authored-by: Squad Team <kevin@squad.local>

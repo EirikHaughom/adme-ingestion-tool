@@ -49,7 +49,7 @@ from app.services.legal_tags import (  # noqa: E402
     update_legal_tag,
 )
 
-SETTINGS_PAGE_PATH = "pages/1_⚙️_Settings.py"
+SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 
 # --- Locked session-state keys (Charlie tests these) ---------------------
 AUTORUN_KEY = "legal_tags_autorun_done"
@@ -186,12 +186,12 @@ def _preflight_ok(connection: ADMEConnection | None) -> bool:
     if connection is None or not connection.is_valid():
         st.info(
             "No ADME connection is configured for this session. "
-            "Open Settings to add your endpoint, identity details, and "
+            "Open Instance Configuration to add your endpoint, identity details, and "
             "data partition."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return False
@@ -200,11 +200,11 @@ def _preflight_ok(connection: ADMEConnection | None) -> bool:
         if get_user_auth_state(st.session_state) is None:
             st.info(
                 "No token available for this session. Sign in on the "
-                "Settings page to manage legal tags."
+                "Instance Configuration page to manage legal tags."
             )
             st.page_link(
                 SETTINGS_PAGE_PATH,
-                label="Open Settings",
+                label="Open Instance Configuration",
                 icon="⚙️",
             )
             return False
@@ -212,11 +212,11 @@ def _preflight_ok(connection: ADMEConnection | None) -> bool:
     if not connection.data_partition_id.strip():
         st.info(
             "No data partition is configured for this connection. "
-            "Open Settings to add the OSDU data-partition id."
+            "Open Instance Configuration to add the OSDU data-partition id."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return False
@@ -236,22 +236,22 @@ def _acquire_token(connection: ADMEConnection) -> str | None:
     except AuthenticationError as exc:
         st.error(
             f"Could not acquire an ADME token: {exc}. "
-            "Open Settings to sign in again or update credentials."
+            "Open Instance Configuration to sign in again or update credentials."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return None
     except Exception as exc:  # noqa: BLE001 - never expose raw auth library details
         st.error(
             f"Unexpected error acquiring an ADME token: {type(exc).__name__}. "
-            "Open Settings to verify your connection."
+            "Open Instance Configuration to verify your connection."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return None

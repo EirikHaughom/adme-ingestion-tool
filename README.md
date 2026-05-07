@@ -44,10 +44,10 @@ pytest
 ## Operator Flow
 
 1. Open the welcome page to see whether the current Streamlit session already has an ADME connection.
-2. Go to **Settings** to enter the ADME endpoint, tenant, client, data partition, auth method, and token scope.
+2. Go to **Instance Configuration** to enter the ADME endpoint, tenant, client, data partition, auth method, and token scope.
 3. Use **Test Connection** to authenticate and probe each configured OSDU service before starting work. For user impersonation, you will sign in through Entra in your browser; the session will return automatically to Streamlit when complete.
 
-### Settings: Token Scope
+### Instance Configuration: Token Scope
 
 The **Token scope** field specifies the OAuth resource scope requested when acquiring ADME access tokens. This is a **configuration setting, not a secret**—it contains no tokens, credentials, or authorization codes.
 
@@ -61,9 +61,12 @@ The **Token scope** field specifies the OAuth resource scope requested when acqu
 
 ```
 app/              # Streamlit application
-  main.py         # Welcome page + session connection status
+  main.py         # Welcome page + grouped Setup / Operate navigation
   pages/          # Multipage navigation
-    1_⚙️_Settings.py  # ADME connection form + health validation
+    1_⚙️_Instance_Configuration.py  # Setup: ADME connection form + health validation
+    2_🔑_Entitlements.py            # Setup: entitlements smoke test
+    3_🏷️_Legal_Tags.py             # Setup: legal-tag CRUD
+    4_📥_Ingestion.py               # Operate: manifest ingestion + workflow polling
   services/       # Auth and service-health integrations
 tests/            # Test suite
 .streamlit/       # Streamlit config

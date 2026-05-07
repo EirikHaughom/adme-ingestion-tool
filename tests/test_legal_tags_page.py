@@ -1,4 +1,4 @@
-"""Tests for the ADME Legal Tags page (`app/pages/4_🏷️_Legal_Tags.py`)."""
+"""Tests for the ADME Legal Tags page (`app/pages/3_🏷️_Legal_Tags.py`)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ LEGAL_TAGS_PAGE_PATH = (
     Path(__file__).resolve().parents[1]
     / "app"
     / "pages"
-    / "4_🏷️_Legal_Tags.py"
+    / "3_🏷️_Legal_Tags.py"
 )
 
 # Locked session-state keys.
@@ -347,7 +347,7 @@ def test_page_blocks_when_no_connection_configured(
     info_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("info")
     ]
-    assert any("Settings" in m for m in info_messages)
+    assert any("Instance Configuration" in m for m in info_messages)
     assert streamlit_recorder.calls_named("page_link")
     assert spy.list_calls == []
     assert spy.properties_calls == []
