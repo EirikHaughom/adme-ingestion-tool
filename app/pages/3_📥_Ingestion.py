@@ -64,6 +64,9 @@ POLLING_ACTIVE_KEY = "ingestion_polling_active"
 HISTORY_KEY = "ingestion_history"
 VERIFICATION_DONE_KEY = "ingestion_verification_done"
 
+# --- Sticky error key (persists across reruns until cleared) --------------
+INGESTION_LAST_ERROR_KEY = "ingestion_last_error"
+
 # --- Internal helper keys (not part of the locked contract) ---------------
 LAST_WORKFLOW_RESULT_KEY = "ingestion_last_workflow_result"
 VERIFICATION_RESULTS_KEY = "ingestion_verification_results"
@@ -84,6 +87,16 @@ VERIFICATION_RETRY_SLEEP_SECONDS = 5
 LABEL_LEGAL_TAG_CHECK = "legal-tag-check"
 LABEL_SUBMIT = "submit"
 LABEL_POLL = "poll"
+
+
+class _PipelineFailureError(Exception):
+    """Raised inside the submit pipeline to short-circuit with a sticky error.
+
+    The exception message is the operator-facing summary that will be both
+    pinned to ``INGESTION_LAST_ERROR_KEY`` and rendered as an ``st.error``
+    outside the ``st.status`` block so it does not vanish when the status
+    box auto-collapses on failure.
+    """
 
 
 def main() -> None:
@@ -112,6 +125,7 @@ def main() -> None:
         f"Endpoint: `{connection.endpoint}`"
     )
 
+    _render_sticky_error()
     _render_input_form(connection)
     _render_manifest_editor()
     _render_action_row()
@@ -146,6 +160,7 @@ def _ensure_page_defaults() -> None:
     st.session_state.setdefault(LAST_LEGAL_TAG_RESULT_KEY, None)
     st.session_state.setdefault(LAST_SUBMIT_RESULT_KEY, None)
     st.session_state.setdefault(LAST_CORRELATION_ID_KEY, None)
+    st.session_state.setdefault(INGESTION_LAST_ERROR_KEY, None)
 
 
 # ---------------------------------------------------------------------------
@@ -349,106 +364,170 @@ def _run_submit_pipeline(connection: ADMEConnection) -> None:
     Steps 4 (poll) and 5 (verify) run on subsequent reruns driven by the
     persisted run-id and workflow status.
     """
+    # Every click clears the sticky error from any prior attempt.
+    st.session_state[INGESTION_LAST_ERROR_KEY] = None
+
     raw_text = st.session_state.get(MANIFEST_TEXT_KEY, "")
     legal_tag = st.session_state.get(LEGAL_TAG_KEY, "").strip()
     acl_owners = st.session_state.get(ACL_OWNERS_KEY, "").strip()
     acl_viewers = st.session_state.get(ACL_VIEWERS_KEY, "").strip()
 
+    # ---------- Pre-pipeline gate: required-field check ------------------
+    # Render directly on the page (NOT inside st.status) so the message
+    # never gets swallowed by an auto-collapsed status block.
+    missing: list[str] = []
+    if not legal_tag:
+        missing.append("Legal tag name")
+    if not acl_owners:
+        missing.append("ACL owners group")
+    if not acl_viewers:
+        missing.append("ACL viewers group")
+    if not raw_text.strip():
+        missing.append("Manifest JSON")
+    if missing:
+        bullets = "\n".join(f"- {field}" for field in missing)
+        msg = (
+            "❌ Cannot ingest yet — please fill in:\n"
+            f"{bullets}"
+        )
+        st.session_state[INGESTION_LAST_ERROR_KEY] = msg
+        st.error(msg)
+        return
+
     status_box = st.status("Submitting manifest…", expanded=True)
 
-    with status_box:
-        # ---------- Step 1: validate + substitute placeholders -----------
-        st.write("**1. Validate JSON & substitute placeholders**")
-        if not legal_tag or not acl_owners or not acl_viewers:
-            st.error(
-                "Legal tag name, ACL owners group, and ACL viewers group "
-                "are all required."
-            )
-            status_box.update(label="Submit aborted", state="error")
-            return
-
-        ok, error_message, parsed = validate_manifest_json(raw_text)
-        if not ok or parsed is None:
-            st.error(f"❌ Manifest is not valid: {error_message}")
-            status_box.update(label="Validation failed", state="error")
-            return
-
-        substituted_text = raw_text
-        if "{{" in raw_text:
-            try:
-                substituted_text = substitute_manifest_placeholders(
-                    raw_text,
-                    data_partition_id=connection.data_partition_id,
-                    legal_tag_name=legal_tag,
-                    acl_owners=acl_owners,
-                    acl_viewers=acl_viewers,
-                )
-            except ValueError as exc:
-                st.error(f"❌ Could not substitute placeholders: {exc}")
-                status_box.update(label="Substitution failed", state="error")
-                return
-            ok, error_message, parsed = validate_manifest_json(substituted_text)
+    try:
+        with status_box:
+            # ---------- Step 1: validate + substitute placeholders -----
+            st.write("**1. Validate JSON & substitute placeholders**")
+            ok, error_message, parsed = validate_manifest_json(raw_text)
             if not ok or parsed is None:
-                st.error(
-                    "❌ Manifest is not valid after placeholder "
-                    f"substitution: {error_message}"
+                st.error(f"❌ Manifest is not valid: {error_message}")
+                status_box.update(label="Validation failed", state="error")
+                raise _PipelineFailureError(
+                    f"❌ Manifest is not valid: {error_message}"
                 )
+
+            substituted_text = raw_text
+            if "{{" in raw_text:
+                try:
+                    substituted_text = substitute_manifest_placeholders(
+                        raw_text,
+                        data_partition_id=connection.data_partition_id,
+                        legal_tag_name=legal_tag,
+                        acl_owners=acl_owners,
+                        acl_viewers=acl_viewers,
+                    )
+                except ValueError as exc:
+                    st.error(f"❌ Could not substitute placeholders: {exc}")
+                    status_box.update(
+                        label="Substitution failed", state="error"
+                    )
+                    raise _PipelineFailureError(
+                        f"❌ Could not substitute placeholders: {exc}"
+                    ) from exc
+                ok, error_message, parsed = validate_manifest_json(
+                    substituted_text
+                )
+                if not ok or parsed is None:
+                    st.error(
+                        "❌ Manifest is not valid after placeholder "
+                        f"substitution: {error_message}"
+                    )
+                    status_box.update(
+                        label="Validation failed after substitution",
+                        state="error",
+                    )
+                    raise _PipelineFailureError(
+                        "❌ Manifest is not valid after placeholder "
+                        f"substitution: {error_message}"
+                    )
+
+            st.session_state[MANIFEST_TEXT_KEY] = substituted_text
+            st.success("✅ Manifest JSON validated.")
+
+            # ---------- Step 2: legal-tag check ------------------------
+            st.write("**2. Check legal tag exists**")
+            token = _acquire_token(connection)
+            if token is None:
                 status_box.update(
-                    label="Validation failed after substitution",
-                    state="error",
+                    label="Token acquisition failed", state="error"
                 )
-                return
+                raise _PipelineFailureError(
+                    "❌ Could not acquire an ADME token. "
+                    "Open Settings to sign in again or update credentials."
+                )
 
-        st.session_state[MANIFEST_TEXT_KEY] = substituted_text
-        st.success("✅ Manifest JSON validated.")
-
-        # ---------- Step 2: legal-tag check ------------------------------
-        st.write("**2. Check legal tag exists**")
-        token = _acquire_token(connection)
-        if token is None:
-            status_box.update(label="Token acquisition failed", state="error")
-            return
-
-        legal_result = check_legal_tag(connection, token, legal_tag)
-        _append_history_legal(legal_result)
-        st.session_state[LAST_LEGAL_TAG_RESULT_KEY] = legal_result
-        if not legal_result.ok:
-            _render_legal_tag_error(legal_result)
-            status_box.update(label="Legal tag missing", state="error")
-            return
-        st.success(f"✅ Legal tag `{legal_tag}` exists in this partition.")
-
-        # ---------- Step 3: submit manifest -----------------------------
-        st.write("**3. Submit manifest to Workflow service**")
-        submit_result = submit_manifest(connection, token, parsed)
-        _append_history_workflow(submit_result, label=LABEL_SUBMIT)
-        st.session_state[LAST_SUBMIT_RESULT_KEY] = submit_result
-        st.session_state[LAST_WORKFLOW_RESULT_KEY] = submit_result
-        if submit_result.correlation_id:
-            st.session_state[LAST_CORRELATION_ID_KEY] = (
-                submit_result.correlation_id
+            legal_result = check_legal_tag(connection, token, legal_tag)
+            _append_history_legal(legal_result)
+            st.session_state[LAST_LEGAL_TAG_RESULT_KEY] = legal_result
+            if not legal_result.ok:
+                _render_legal_tag_error(legal_result)
+                status_box.update(label="Legal tag missing", state="error")
+                raise _PipelineFailureError(
+                    _format_error_summary(
+                        "Legal tag check failed",
+                        legal_result.error_message or "Unknown error.",
+                        legal_result.http_status,
+                        legal_result.correlation_id,
+                    )
+                )
+            st.success(
+                f"✅ Legal tag `{legal_tag}` exists in this partition."
             )
 
-        if not submit_result.ok or not submit_result.run_id:
-            _render_workflow_error(submit_result, headline="Submit failed")
-            status_box.update(label="Submit failed", state="error")
-            return
+            # ---------- Step 3: submit manifest ------------------------
+            st.write("**3. Submit manifest to Workflow service**")
+            submit_result = submit_manifest(connection, token, parsed)
+            _append_history_workflow(submit_result, label=LABEL_SUBMIT)
+            st.session_state[LAST_SUBMIT_RESULT_KEY] = submit_result
+            st.session_state[LAST_WORKFLOW_RESULT_KEY] = submit_result
+            if submit_result.correlation_id:
+                st.session_state[LAST_CORRELATION_ID_KEY] = (
+                    submit_result.correlation_id
+                )
 
-        # Persist polling state and the unique kinds we'll verify later.
-        st.session_state[RUN_ID_KEY] = submit_result.run_id
-        st.session_state[SUBMIT_STARTED_AT_KEY] = datetime.now(tz=UTC)
-        st.session_state[KINDS_KEY] = _extract_unique_kinds(parsed)
-        st.session_state[WORKFLOW_STATUS_KEY] = submit_result.status
-        st.session_state[POLLING_ACTIVE_KEY] = True
-        st.session_state[VERIFICATION_DONE_KEY] = False
-        st.session_state[VERIFICATION_RESULTS_KEY] = []
-        st.session_state[VERIFICATION_RETRIES_KEY] = {}
+            if not submit_result.ok or not submit_result.run_id:
+                _render_workflow_error(
+                    submit_result, headline="Submit failed"
+                )
+                status_box.update(label="Submit failed", state="error")
+                raise _PipelineFailureError(
+                    _format_error_summary(
+                        "Submit failed",
+                        submit_result.error_message
+                        or submit_result.message
+                        or "Unknown error.",
+                        submit_result.http_status,
+                        submit_result.correlation_id,
+                    )
+                )
 
-        st.success(
-            f"✅ Workflow accepted — run id `{submit_result.run_id}`. "
-            "Polling status…"
-        )
-        status_box.update(label="Submitted, polling status", state="running")
+            # Persist polling state and the unique kinds we'll verify later.
+            st.session_state[RUN_ID_KEY] = submit_result.run_id
+            st.session_state[SUBMIT_STARTED_AT_KEY] = datetime.now(tz=UTC)
+            st.session_state[KINDS_KEY] = _extract_unique_kinds(parsed)
+            st.session_state[WORKFLOW_STATUS_KEY] = submit_result.status
+            st.session_state[POLLING_ACTIVE_KEY] = True
+            st.session_state[VERIFICATION_DONE_KEY] = False
+            st.session_state[VERIFICATION_RESULTS_KEY] = []
+            st.session_state[VERIFICATION_RETRIES_KEY] = {}
+
+            st.success(
+                f"✅ Workflow accepted — run id `{submit_result.run_id}`. "
+                "Polling status…"
+            )
+            status_box.update(
+                label="Submitted, polling status", state="running"
+            )
+    except _PipelineFailureError as exc:
+        # The status block has already been marked state="error" so it stays
+        # expanded.  Pin the summary to session state and also render an
+        # st.error outside the (now-failed) status block.
+        message = str(exc)
+        st.session_state[INGESTION_LAST_ERROR_KEY] = message
+        st.error(message)
+        return
 
     # Trigger a rerun so the polling block (rendered below) takes over.
     st.rerun()
@@ -530,6 +609,12 @@ def _render_run_status() -> None:
         st.session_state[WORKFLOW_STATUS_KEY] = WorkflowStatus.FAILED
         st.session_state[POLLING_ACTIVE_KEY] = False
         _render_workflow_error(synthetic, headline="Workflow timed out")
+        st.session_state[INGESTION_LAST_ERROR_KEY] = _format_error_summary(
+            "Workflow timed out",
+            synthetic.error_message or "Polling timed out.",
+            synthetic.http_status,
+            synthetic.correlation_id,
+        )
         return
 
     connection = get_connection(st.session_state)
@@ -559,6 +644,14 @@ def _render_run_status() -> None:
     if poll_result.status == WorkflowStatus.FAILED:
         st.session_state[POLLING_ACTIVE_KEY] = False
         _render_workflow_error(poll_result, headline="Workflow failed")
+        st.session_state[INGESTION_LAST_ERROR_KEY] = _format_error_summary(
+            "Workflow failed",
+            poll_result.error_message
+            or poll_result.message
+            or "Unknown error.",
+            poll_result.http_status,
+            poll_result.correlation_id,
+        )
         return
 
     # Still IN_PROGRESS / UNKNOWN — schedule the next poll.
@@ -838,6 +931,43 @@ def _append_history_search(result: SearchResult) -> None:
 # ---------------------------------------------------------------------------
 # Error rendering helpers
 # ---------------------------------------------------------------------------
+
+
+def _format_error_summary(
+    headline: str,
+    message: str,
+    http_status: int | None,
+    correlation_id: str | None,
+) -> str:
+    """Compose a sticky-error summary (headline + message + HTTP + corr-id)."""
+    parts = [f"❌ {headline}: {message}"]
+    detail_bits: list[str] = []
+    if http_status is not None:
+        detail_bits.append(f"HTTP {http_status}")
+    if correlation_id:
+        detail_bits.append(f"correlation `{correlation_id}`")
+    if detail_bits:
+        parts.append("_" + " · ".join(detail_bits) + "_")
+    return "  \n".join(parts)
+
+
+def _render_sticky_error() -> None:
+    """Render the persistent error banner (if any) above the form.
+
+    The banner survives reruns so transient ``st.status`` failures don't
+    flash and disappear.  Cleared either by another "Validate & Ingest"
+    click or by the operator pressing the "Dismiss error" button.
+    """
+    message = st.session_state.get(INGESTION_LAST_ERROR_KEY)
+    if not message:
+        return
+    cols = st.columns([8, 1])
+    with cols[0]:
+        st.error(message)
+    with cols[1]:
+        if st.button("Dismiss error", key="ingestion_dismiss_error"):
+            st.session_state[INGESTION_LAST_ERROR_KEY] = None
+            st.rerun()
 
 
 def _render_legal_tag_error(result: LegalTagCheckResult) -> None:

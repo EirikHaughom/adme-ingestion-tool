@@ -455,12 +455,19 @@ def test_submit_pipeline_with_missing_legal_tag_inputs_aborts_at_step_1(
     error_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("error")
     ]
+    # Pre-pipeline gate lists each missing field by name; pipeline never runs.
     assert any(
-        "required" in m.lower() and "legal" in m.lower()
+        "fill in" in m.lower() and "legal tag" in m.lower()
         for m in error_messages
     )
+    assert any("ACL owners" in m for m in error_messages)
+    assert any("ACL viewers" in m for m in error_messages)
     assert spy.legal == []
     assert spy.submit == []
+    # The sticky error key is set so the message survives reruns.
+    assert streamlit_recorder.session_state.get(
+        "ingestion_last_error"
+    ) is not None
 
 
 # ===========================================================================

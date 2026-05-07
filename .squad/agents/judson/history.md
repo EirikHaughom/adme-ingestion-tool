@@ -143,3 +143,11 @@ change required.
 - pandas import keeps the same `# type: ignore[import-untyped]` pattern (no pandas-stubs installed). `E712` suppressed on the explicit boolean comparison in `_history_to_chart_frame` because pandas needs `frame[col] == True`, not Python-truthy `frame[col]`.
 - DID NOT touch Kevin's modules (`app/services/ingestion.py`, `app/services/verification.py`, `app/models/osdu.py`). DID NOT touch `connection_state.py`. DID NOT touch tests (Charlie owns).
 - Validation: `ruff check "app/pages/3_📥_Ingestion.py"` -> All checks passed. `mypy "app/pages/3_📥_Ingestion.py"` -> Success: no issues found in 1 source file. Did not run end-to-end against a live ADME because no test connection is wired in this session - Charlie's recorder tests will exercise the page logic.
+
+### 2026-05-07 — Sticky errors on Ingestion page
+
+- Bug: clicking "Validate & Ingest" with empty form fields ran the pipeline inside st.status, which auto-collapsed on failure → red error flashed and disappeared.
+- Fix 1 (pre-pipeline gate): before opening st.status, validate that legal-tag, ACL owners, ACL viewers, AND manifest text are all non-empty. On any miss, render a single st.error listing each missing field by name and return without entering the pipeline. Form values stay in session state.
+- Fix 2 (sticky pipeline errors): added new session key `ingestion_last_error` (str | None). Each pipeline failure path (validation, substitution, legal-tag, submit, polling-FAILED, polling-timeout) now (a) keeps its in-status detailed render, (b) calls `status_box.update(state="error")` so the box stays expanded, and (c) sets the sticky message. Refactored `_run_submit_pipeline` to raise `_PipelineFailureError` from inside the `with status_box:` block; the outer `try/except` records the sticky and renders an outside-status `st.error`. `_render_sticky_error` (new) shows the message + a "Dismiss error" button at the top of the page on every rerun. Cleared at the start of every "Validate & Ingest" click or by Dismiss.
+- Charlie's locked keys are unchanged. `ingestion_last_error` is purely additive. Updated one existing test (`test_submit_pipeline_with_missing_legal_tag_inputs_aborts_at_step_1`) to assert the new "fill in" gate-message wording and the sticky-key being populated.
+- Ruff + mypy clean. 21/21 ingestion-page tests pass.
