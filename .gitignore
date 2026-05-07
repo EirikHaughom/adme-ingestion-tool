@@ -213,3 +213,4 @@ __marimo__/
 .squad/.scratch/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+.git-commit-msg.txt
