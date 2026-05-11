@@ -32,6 +32,7 @@ INSTANCE_CONFIG_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 ENTITLEMENTS_PAGE_PATH = "pages/2_🔑_Entitlements.py"
 LEGAL_TAGS_PAGE_PATH = "pages/3_🏷️_Legal_Tags.py"
 INGESTION_PAGE_PATH = "pages/4_📥_Ingestion.py"
+FILE_UPLOAD_PAGE_PATH = "pages/6_📂_File_Upload.py"
 SEARCH_PAGE_PATH = "pages/5_🔍_Search.py"
 
 
@@ -157,6 +158,11 @@ def main() -> None:
         title="Ingestion",
         icon="📥",
     )
+    file_upload_page = st.Page(
+        FILE_UPLOAD_PAGE_PATH,
+        title="File Upload",
+        icon="📂",
+    )
     search_page = st.Page(
         SEARCH_PAGE_PATH,
         title="Search",
@@ -171,7 +177,7 @@ def main() -> None:
                 entitlements_page,
                 legal_tags_page,
             ],
-            "Operate": [ingestion_page, search_page],
+            "Operate": [ingestion_page, file_upload_page, search_page],
         }
     )
     nav.run()

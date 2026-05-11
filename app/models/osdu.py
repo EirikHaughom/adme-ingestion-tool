@@ -258,3 +258,51 @@ class LegalTagPropertiesResult:
     correlation_id: str | None = None
     error_message: str | None = None
     raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UploadURLResult:
+    """Outcome of ``GET /api/file/v2/files/uploadURL``.
+
+    ``signed_url`` is the Azure Blob SAS URL returned by ADME; treat as a
+    credential and never log the query string. ``file_source`` is the
+    opaque value to echo back in the metadata POST body.
+    """
+
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    signed_url: str | None = None
+    file_source: str | None = None
+    file_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UploadBytesResult:
+    """Outcome of the ``PUT`` to the Azure Blob signed URL.
+
+    NOTE: No ``correlation_id`` field by design — this call goes directly
+    to Azure Blob Storage via the SAS-signed URL, not through ADME, and
+    Azure does not emit an ADME correlation header.
+    """
+
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    error_message: str | None = None
+    bytes_uploaded: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class FileMetadataResult:
+    """Outcome of ``POST /api/file/v2/files/metadata``."""
+
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    record_id: str | None = None
+    record_version: int | None = None

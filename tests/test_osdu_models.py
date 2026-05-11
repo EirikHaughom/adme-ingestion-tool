@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from app.models.osdu import (
+    FileMetadataResult,
     KindAggregationResult,
     LegalTag,
     LegalTagCheckResult,
@@ -19,6 +20,8 @@ from app.models.osdu import (
     RecordSummary,
     SearchPageResult,
     SearchResult,
+    UploadBytesResult,
+    UploadURLResult,
     WorkflowRunResult,
     WorkflowStatus,
     parse_workflow_status,
@@ -490,5 +493,105 @@ def test_record_detail_result_with_record() -> None:
 
 def test_record_detail_result_is_frozen() -> None:
     result = RecordDetailResult(record_id="x")
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# File upload dataclasses (frozen + slotted)
+# ---------------------------------------------------------------------------
+
+
+_FILE_UPLOAD_CLASSES = [
+    UploadURLResult,
+    UploadBytesResult,
+    FileMetadataResult,
+]
+
+
+@pytest.mark.parametrize("cls", _FILE_UPLOAD_CLASSES)
+def test_file_upload_dataclass_uses_slots(cls: type) -> None:
+    assert "__slots__" in vars(cls), (
+        f"{cls.__name__} must be declared with slots=True"
+    )
+
+
+def test_upload_url_result_defaults_and_construction() -> None:
+    empty = UploadURLResult()
+    assert empty.ok is False
+    assert empty.http_status is None
+    assert empty.latency_ms == 0.0
+    assert empty.correlation_id is None
+    assert empty.error_message is None
+    assert empty.signed_url is None
+    assert empty.file_source is None
+    assert empty.file_id is None
+
+    populated = UploadURLResult(
+        ok=True,
+        http_status=200,
+        latency_ms=12.3,
+        correlation_id="corr",
+        signed_url="https://blob/x?sas",
+        file_source="/abc",
+        file_id="fid-1",
+    )
+    assert populated.signed_url == "https://blob/x?sas"
+    assert populated.file_source == "/abc"
+    assert populated.file_id == "fid-1"
+
+
+def test_upload_url_result_is_frozen() -> None:
+    result = UploadURLResult()
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
+
+
+def test_upload_bytes_result_defaults_and_construction() -> None:
+    empty = UploadBytesResult()
+    assert empty.ok is False
+    assert empty.http_status is None
+    assert empty.latency_ms == 0.0
+    assert empty.error_message is None
+    assert empty.bytes_uploaded == 0
+    # No correlation_id field by design.
+    assert not hasattr(empty, "correlation_id")
+
+    populated = UploadBytesResult(
+        ok=True, http_status=201, latency_ms=99.9, bytes_uploaded=4096
+    )
+    assert populated.ok is True
+    assert populated.bytes_uploaded == 4096
+
+
+def test_upload_bytes_result_is_frozen() -> None:
+    result = UploadBytesResult()
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
+
+
+def test_file_metadata_result_defaults_and_construction() -> None:
+    empty = FileMetadataResult()
+    assert empty.ok is False
+    assert empty.http_status is None
+    assert empty.latency_ms == 0.0
+    assert empty.correlation_id is None
+    assert empty.error_message is None
+    assert empty.record_id is None
+    assert empty.record_version is None
+
+    populated = FileMetadataResult(
+        ok=True,
+        http_status=201,
+        correlation_id="corr",
+        record_id="opendes:dataset--File.Generic:abc",
+        record_version=17,
+    )
+    assert populated.record_id == "opendes:dataset--File.Generic:abc"
+    assert populated.record_version == 17
+
+
+def test_file_metadata_result_is_frozen() -> None:
+    result = FileMetadataResult()
     with pytest.raises(FrozenInstanceError):
         result.ok = True  # type: ignore[misc]
