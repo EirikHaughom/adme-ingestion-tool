@@ -1,6 +1,6 @@
 # ADME Ingestion Tool — Backlog
 
-Maintained by Satya. Last updated: 2026-05-11 (post File Upload v1 ship).
+Maintained by Satya. Last updated: 2026-05-11 (post Manifest Builder v1 ship).
 
 This document is the source of truth for what we're working on, what's next, and what's been deferred. `decisions.md` records *why* we decided what; this doc records *what* and *when*. When priorities change, update here first.
 
@@ -19,18 +19,14 @@ Size scale: **XS** (≤1 hr touch-up) · **S** (single page/module, few hours) �
 
 ## Now
 
-### 1. Manifest builder UI — **M** — owner: Judson
-Form-driven manifest construction for the common cases (single Master record, single Work-Product-Component, file reference) so an operator can ingest without hand-writing JSON. Promoted to Now because File Upload v1 just shipped and the natural next operator workflow is "I uploaded a file, now help me reference it from a manifest without hand-editing JSON." The upload result (record `id` + `FileSource`) should auto-populate a `Datasets[*]` reference in the manifest. Out of scope: arbitrary schema-driven builder; hand-pick 2–3 frequent kinds for v1.
-- Needs: Satya to scope which 2–3 kinds (likely File.Generic reference + one Master + one WPC), Judson to build the form, Kevin to extend `app/services/ingestion.py` if any new helpers are needed, Charlie to test.
+### 1. Run history page — **S/M** — owner: Judson
+A cross-session list of past workflow runs (run id, kind, status, latency, when) so operators can see what they've ingested today without scrolling through `ingestion_history` in the current Streamlit session. Should also surface recent file uploads (record id, FileSource, size, when) now that File Upload v1 ships. Storage: simple JSON sidecar or SQLite — pick whatever Scott/Kevin think is least surprising. This unlocks "did I already ingest/upload this?" without re-hitting OSDU.
 
 ---
 
 ## Next
 
-### 2. Run history page — **S/M** — owner: Judson
-A cross-session list of past workflow runs (run id, kind, status, latency, when) so operators can see what they've ingested today without scrolling through `ingestion_history` in the current Streamlit session. Should also surface recent file uploads (record id, FileSource, size, when) now that File Upload v1 ships. Storage: simple JSON sidecar or SQLite — pick whatever Scott/Kevin think is least surprising. This unlocks "did I already ingest/upload this?" without re-hitting OSDU.
-
-### 3. Switch ingestion legal-tag pre-flight to `POST /legaltags:validate` — **XS** — owner: Kevin (Darryl review)
+### 2. Switch ingestion legal-tag pre-flight to `POST /legaltags:validate` — **XS** — owner: Kevin (Darryl review)
 Today the Ingestion page does `GET /legaltags/{name}` to confirm a tag exists before submitting a workflow. Darryl flagged that `POST /api/legal/v1/legaltags:validate` is the more correct call — it confirms the tag is *valid* (not just *present*) and returns the same shape the workflow service uses internally. Small, isolated change; do it before the next ingestion-touching feature ships.
 
 ---
@@ -101,6 +97,8 @@ Small flagged items from shipping. Not features; do opportunistically.
 ---
 
 ## Done
+
+- **Manifest Builder v1 (Ingest › Manifest)** — 2026-05-11 — form-driven construction of a single `osdu:wks:dataset--File.Generic:1.0.0` manifest from operator inputs, exposed as a `🛠️ Build manifest` expander above the manifest editor on the Manifest page. Two pick modes: "From recent uploads" (reads in-session `upload_summary` rows produced by the File Upload page) and "Paste manually" (operator supplies FileSource + record id directly). Auto-fills display name, description, ACL/legal pickers; emits valid Workflow-ready JSON into the editor for review or hand-edit before submit. New pure service `app/services/manifest_builder.py` (`build_file_generic_manifest`), UI in `app/pages/5_📄_Manifest.py`. **Same shipping pass also reorganized the sidebar nav** into three groups — Setup / Ingest / Operate — and renamed/regrouped the File Upload and Manifest pages accordingly. **Validator loosened**: `Data` block on WPC records now accepts the OSDU work-product-component object shape (was previously over-strict). Walkthrough doc: `docs/walkthroughs/tno-end-to-end.md`. 713 tests pass.
 File Upload page (Operate › File Upload)** — 2026-05-11 — branch `marielherz_FileUpload`, PR #12 (9 files, +3,251). Three-phase OSDU File Service v2 flow: GET `/api/file/v2/files/uploadURL` → PUT bytes to Azure signed URL (with `x-ms-blob-type: BlockBlob`) → POST `/api/file/v2/files/metadata`. New `app/services/files.py`, three result dataclasses (`UploadURLResult`, `UploadBytesResult`, `FileMetadataResult`), new page `6_📂_File_Upload.py`, 100 MB single-PUT cap. 600/600 tests pass.
 - **
 Shipping highlights. SHAs in git log; this is just the headline list.

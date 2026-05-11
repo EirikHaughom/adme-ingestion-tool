@@ -1,8 +1,8 @@
 """Entry point for the ADME control plane Streamlit app.
 
-Uses ``st.navigation`` to group pages into a Setup / Operate hierarchy that
-mirrors the operator's journey: configure once (Setup) → run repeatedly
-(Operate).
+Uses ``st.navigation`` to group pages into a Setup / Ingest / Operate
+hierarchy that mirrors the operator's journey: configure once (Setup),
+load data via one of several methods (Ingest), then work with it (Operate).
 """
 
 from __future__ import annotations
@@ -31,9 +31,10 @@ from app.connection_state import (  # noqa: E402
 INSTANCE_CONFIG_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 ENTITLEMENTS_PAGE_PATH = "pages/2_🔑_Entitlements.py"
 LEGAL_TAGS_PAGE_PATH = "pages/3_🏷️_Legal_Tags.py"
-INGESTION_PAGE_PATH = "pages/4_📥_Ingestion.py"
-FILE_UPLOAD_PAGE_PATH = "pages/6_📂_File_Upload.py"
-SEARCH_PAGE_PATH = "pages/5_🔍_Search.py"
+INGEST_PAGE_PATH = "pages/4_📥_Ingest.py"
+INGESTION_PAGE_PATH = "pages/5_📄_Manifest.py"
+FILE_UPLOAD_PAGE_PATH = "pages/6_📂_File.py"
+SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
 
 
 def _render_home() -> None:
@@ -153,14 +154,19 @@ def main() -> None:
         title="Legal Tags",
         icon="🏷️",
     )
-    ingestion_page = st.Page(
-        INGESTION_PAGE_PATH,
-        title="Ingestion",
+    ingest_landing_page = st.Page(
+        INGEST_PAGE_PATH,
+        title="Ingest",
         icon="📥",
     )
-    file_upload_page = st.Page(
+    manifest_page = st.Page(
+        INGESTION_PAGE_PATH,
+        title="Manifest",
+        icon="📄",
+    )
+    file_page = st.Page(
         FILE_UPLOAD_PAGE_PATH,
-        title="File Upload",
+        title="File",
         icon="📂",
     )
     search_page = st.Page(
@@ -177,7 +183,8 @@ def main() -> None:
                 entitlements_page,
                 legal_tags_page,
             ],
-            "Operate": [ingestion_page, file_upload_page, search_page],
+            "Ingest": [ingest_landing_page, manifest_page, file_page],
+            "Operate": [search_page],
         }
     )
     nav.run()

@@ -1,4 +1,4 @@
-"""Tests for the ADME manifest-ingestion page (`app/pages/4_📥_Ingestion.py`)."""
+"""Tests for the ADME manifest-ingestion page (`app/pages/5_📄_Manifest.py`)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ INGESTION_PAGE_PATH = (
     Path(__file__).resolve().parents[1]
     / "app"
     / "pages"
-    / "4_📥_Ingestion.py"
+    / "5_📄_Manifest.py"
 )
 
 # Locked session keys (per Judson's contract — Charlie tests these names).
@@ -1043,3 +1043,226 @@ def test_clear_history_button_empties_history_and_persists_across_rerun(
         call.args[0] for call in streamlit_recorder.calls_named("caption")
     ]
     assert any("No ingestion API calls" in c for c in captions)
+
+
+# ===========================================================================
+# Manifest Builder (expander above the editor)
+# ===========================================================================
+
+
+GENERATE_MANIFEST_LABEL = "Generate manifest"
+
+MANIFEST_BUILDER_PICK_MODE_KEY = "manifest_builder_pick_mode"
+MANIFEST_BUILDER_FILE_SOURCE_KEY = "manifest_builder_file_source"
+MANIFEST_BUILDER_FILE_ID_KEY = "manifest_builder_file_id"
+MANIFEST_BUILDER_DISPLAY_NAME_KEY = "manifest_builder_display_name"
+MANIFEST_BUILDER_DESCRIPTION_KEY = "manifest_builder_description"
+MANIFEST_BUILDER_PENDING_TEXT_KEY = "manifest_builder_pending_text"
+MANIFEST_BUILDER_LAST_GENERATED_KEY = "manifest_builder_last_generated"
+FILE_UPLOAD_HISTORY_KEY = "file_upload_history"
+
+
+def test_manifest_builder_expander_renders_with_paste_mode_default(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When file_upload_history has no usable entries the Builder still
+    renders an expander labelled '🛠️ Build manifest' and defaults to paste
+    mode."""
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    page_module = _load_ingestion_module(streamlit_recorder, monkeypatch)
+    _patch_services(page_module, monkeypatch)
+
+    page_module.main()
+
+    expanders = [
+        call.args[0]
+        for call in streamlit_recorder.calls_named("expander")
+    ]
+    assert any("Build manifest" in label for label in expanders)
+    assert (
+        streamlit_recorder.session_state[MANIFEST_BUILDER_PICK_MODE_KEY]
+        == "paste"
+    )
+
+
+def test_manifest_builder_generate_with_paste_inputs_writes_sentinel(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generate click in paste mode primes the editor via the sentinel
+    key and stores the generated dict for diagnostics."""
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    streamlit_recorder.session_state[LEGAL_TAG_KEY] = "opendes-tag"
+    streamlit_recorder.session_state[ACL_OWNERS_KEY] = (
+        "data.default.owners@opendes.dataservices.energy"
+    )
+    streamlit_recorder.session_state[ACL_VIEWERS_KEY] = (
+        "data.default.viewers@opendes.dataservices.energy"
+    )
+    streamlit_recorder.session_state[MANIFEST_BUILDER_PICK_MODE_KEY] = "paste"
+    streamlit_recorder.session_state[MANIFEST_BUILDER_FILE_SOURCE_KEY] = (
+        "https://acct.blob.core.windows.net/c/path"
+    )
+    streamlit_recorder.session_state[MANIFEST_BUILDER_FILE_ID_KEY] = (
+        "opendes:dataset--File.Generic:abc123"
+    )
+    streamlit_recorder.session_state[MANIFEST_BUILDER_DISPLAY_NAME_KEY] = (
+        "my-dataset.csv"
+    )
+    streamlit_recorder.session_state[MANIFEST_BUILDER_DESCRIPTION_KEY] = (
+        "test description"
+    )
+    streamlit_recorder.button_responses[GENERATE_MANIFEST_LABEL] = True
+    page_module = _load_ingestion_module(streamlit_recorder, monkeypatch)
+    _patch_services(page_module, monkeypatch)
+
+    page_module.main()
+
+    # Sentinel key is set with valid JSON.
+    pending = streamlit_recorder.session_state.get(
+        MANIFEST_BUILDER_PENDING_TEXT_KEY
+    )
+    assert isinstance(pending, str)
+    parsed = json.loads(pending)
+    assert "executionContext" in parsed
+    datasets = parsed["executionContext"]["manifest"]["Data"]["Datasets"]
+    assert len(datasets) == 1
+    assert datasets[0]["id"] == "opendes:dataset--File.Generic:abc123"
+    assert datasets[0]["data"]["DatasetProperties"]["FileSourceInfo"][
+        "FileSource"
+    ] == "https://acct.blob.core.windows.net/c/path"
+    # Last-generated dict mirrored for diagnostics.
+    last = streamlit_recorder.session_state.get(
+        MANIFEST_BUILDER_LAST_GENERATED_KEY
+    )
+    assert isinstance(last, dict)
+    assert last == parsed
+    # Editor key NOT written directly from the click handler — that
+    # happens on the next rerun via the sentinel-prime block.
+    assert streamlit_recorder.session_state.get(MANIFEST_TEXT_KEY, "") == ""
+
+
+def test_manifest_builder_generate_with_missing_required_fields_errors(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generate click without FileSource/file_id renders st.error and
+    does NOT write the sentinel."""
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    streamlit_recorder.session_state[LEGAL_TAG_KEY] = "opendes-tag"
+    streamlit_recorder.session_state[ACL_OWNERS_KEY] = "owners@x"
+    streamlit_recorder.session_state[ACL_VIEWERS_KEY] = "viewers@x"
+    streamlit_recorder.session_state[MANIFEST_BUILDER_PICK_MODE_KEY] = "paste"
+    # Intentionally leave file_source / file_id / display_name blank.
+    streamlit_recorder.button_responses[GENERATE_MANIFEST_LABEL] = True
+    page_module = _load_ingestion_module(streamlit_recorder, monkeypatch)
+    _patch_services(page_module, monkeypatch)
+
+    page_module.main()
+
+    error_messages = [
+        call.args[0]
+        for call in streamlit_recorder.calls_named("error")
+    ]
+    combined = "\n".join(error_messages)
+    assert "FileSource" in combined
+    assert "File record id" in combined
+    assert "Display name" in combined
+    # Sentinel was NOT written.
+    assert (
+        MANIFEST_BUILDER_PENDING_TEXT_KEY
+        not in streamlit_recorder.session_state
+    )
+
+
+def test_manifest_builder_pending_text_primes_editor_on_rerun(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-existing sentinel value is moved into MANIFEST_TEXT_KEY on the
+    next render and the sentinel is removed."""
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    pending_payload = json.dumps(
+        {"executionContext": {"manifest": {"Data": {"Datasets": []}}}},
+        indent=2,
+    )
+    streamlit_recorder.session_state[MANIFEST_BUILDER_PENDING_TEXT_KEY] = (
+        pending_payload
+    )
+    page_module = _load_ingestion_module(streamlit_recorder, monkeypatch)
+    _patch_services(page_module, monkeypatch)
+
+    page_module.main()
+
+    assert (
+        streamlit_recorder.session_state[MANIFEST_TEXT_KEY] == pending_payload
+    )
+    assert (
+        MANIFEST_BUILDER_PENDING_TEXT_KEY
+        not in streamlit_recorder.session_state
+    )
+
+
+def test_manifest_builder_recent_uploads_picker_uses_filtered_history(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When file_upload_history contains entries with record_id /
+    display_name / file_source, the Builder defaults to recent mode and
+    the Generate click uses those values."""
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    streamlit_recorder.session_state[LEGAL_TAG_KEY] = "opendes-tag"
+    streamlit_recorder.session_state[ACL_OWNERS_KEY] = "owners@x"
+    streamlit_recorder.session_state[ACL_VIEWERS_KEY] = "viewers@x"
+    streamlit_recorder.session_state[FILE_UPLOAD_HISTORY_KEY] = [
+        {
+            "timestamp": "2026-05-11T19:00:00Z",
+            "endpoint": "metadata",
+            "ok": True,
+            "http_status": 201,
+            "latency_ms": 22.0,
+            "correlation_id": "corr",
+            "error_message": None,
+        },
+        {
+            "timestamp": "2026-05-11T19:01:00Z",
+            "kind": "upload_summary",
+            "record_id": "opendes:dataset--File.Generic:rec-1",
+            "display_name": "my-recent.csv",
+            "file_source": (
+                "https://acct.blob.core.windows.net/c/path"
+            ),
+        },
+    ]
+    streamlit_recorder.session_state[MANIFEST_BUILDER_PICK_MODE_KEY] = (
+        "recent"
+    )
+    streamlit_recorder.button_responses[GENERATE_MANIFEST_LABEL] = True
+    page_module = _load_ingestion_module(streamlit_recorder, monkeypatch)
+    _patch_services(page_module, monkeypatch)
+
+    page_module.main()
+
+    pending = streamlit_recorder.session_state.get(
+        MANIFEST_BUILDER_PENDING_TEXT_KEY
+    )
+    assert isinstance(pending, str)
+    parsed = json.loads(pending)
+    datasets = parsed["executionContext"]["manifest"]["Data"]["Datasets"]
+    assert datasets[0]["id"] == "opendes:dataset--File.Generic:rec-1"
+    assert datasets[0]["data"]["Name"] == "my-recent.csv"
+    assert datasets[0]["data"]["DatasetProperties"]["FileSourceInfo"][
+        "FileSource"
+    ] == "https://acct.blob.core.windows.net/c/path"
+

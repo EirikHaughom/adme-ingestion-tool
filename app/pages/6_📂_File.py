@@ -46,7 +46,7 @@ from app.services.files import (  # noqa: E402
 from app.services.legal_tags import list_legal_tags  # noqa: E402
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
-SEARCH_PAGE_PATH = "pages/5_🔍_Search.py"
+SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
 
 # --- Locked session-state keys (per Satya's contract) --------------------
 FILE_UPLOAD_LEGAL_TAG_KEY = "file_upload_legal_tag"
@@ -81,11 +81,11 @@ class _PipelineFailureError(Exception):
 def main() -> None:
     """Render the file upload page."""
     st.set_page_config(
-        page_title="File Upload · ADME Control Plane",
+        page_title="File · ADME Control Plane",
         page_icon="📂",
         layout="wide",
     )
-    st.title("📂 Upload a file to ADME")
+    st.title("📂 Upload a file")
     st.markdown(
         "Upload a single file to your ADME instance via the OSDU File "
         "Service v2 three-step flow: request a signed URL, push the bytes "
@@ -647,6 +647,12 @@ def _run_upload_pipeline(
                 acl_viewers=acl_viewers,
             )
             _append_history_metadata(metadata_result)
+            if metadata_result.ok and metadata_result.record_id:
+                _append_history_upload_summary(
+                    record_id=metadata_result.record_id,
+                    display_name=resolved_display_name,
+                    file_source=file_source,
+                )
             if not metadata_result.ok:
                 # Critical edge case: bytes landed, metadata didn't —
                 # preserve the file id so the operator can recover.
@@ -759,9 +765,13 @@ def _render_history() -> None:
 
 def _history_to_chart_frame(history: list[dict[str, Any]]) -> pd.DataFrame:
     """Pivot history into a timestamp-indexed frame, ok-only rows."""
-    if not history:
+    api_rows = [
+        entry for entry in history
+        if entry.get("kind") != "upload_summary" and entry.get("endpoint")
+    ]
+    if not api_rows:
         return pd.DataFrame()
-    frame = pd.DataFrame(history)
+    frame = pd.DataFrame(api_rows)
     frame = frame[frame["ok"] == True]  # noqa: E712 - explicit boolean
     if frame.empty:
         return pd.DataFrame()
@@ -778,7 +788,11 @@ def _history_to_table_rows(
     history: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Project history into newest-first rows for st.dataframe."""
-    recent = list(reversed(history))[:HISTORY_DISPLAY_LIMIT]
+    api_rows = [
+        entry for entry in history
+        if entry.get("kind") != "upload_summary" and entry.get("endpoint")
+    ]
+    recent = list(reversed(api_rows))[:HISTORY_DISPLAY_LIMIT]
     rows: list[dict[str, Any]] = []
     for entry in recent:
         rows.append(
@@ -855,6 +869,33 @@ def _append_history_metadata(result: FileMetadataResult) -> None:
         correlation_id=result.correlation_id,
         error_message=result.error_message,
     )
+
+
+def _append_history_upload_summary(
+    *,
+    record_id: str,
+    display_name: str,
+    file_source: str,
+) -> None:
+    """Append a successful-upload summary row.
+
+    Distinct shape from the latency/diagnostic rows emitted by
+    ``_append_history`` — discriminated by ``kind="upload_summary"``.
+    Carries the three fields the Manifest Builder's "From recent
+    uploads" picker filters on (``record_id``, ``display_name``,
+    ``file_source``) so the picker has something to show.
+    """
+    history = st.session_state.get(FILE_UPLOAD_HISTORY_KEY, [])
+    history.append(
+        {
+            "timestamp": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "kind": "upload_summary",
+            "record_id": record_id,
+            "display_name": display_name,
+            "file_source": file_source,
+        }
+    )
+    st.session_state[FILE_UPLOAD_HISTORY_KEY] = history
 
 
 # ---------------------------------------------------------------------------

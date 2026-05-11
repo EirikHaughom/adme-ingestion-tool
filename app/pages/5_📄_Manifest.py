@@ -8,6 +8,7 @@ primitives.
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from datetime import UTC, datetime
@@ -48,6 +49,10 @@ from app.services.ingestion import (  # noqa: E402
     validate_manifest_json,
 )
 from app.services.legal_tags import list_legal_tags  # noqa: E402
+from app.services.manifest_builder import (  # noqa: E402
+    DEFAULT_DATASET_KIND,
+    build_file_generic_manifest,
+)
 from app.services.verification import search_records_by_kind  # noqa: E402
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
@@ -84,6 +89,26 @@ INGESTION_LEGAL_TAG_OPTIONS_KEY = "ingestion_legal_tag_options"
 INGESTION_ACL_OWNER_OPTIONS_KEY = "ingestion_acl_owner_options"
 INGESTION_ACL_VIEWER_OPTIONS_KEY = "ingestion_acl_viewer_options"
 
+# --- Manifest Builder session keys (per Satya's contract) ----------------
+# Locked names — Charlie tests these. `manifest_builder_file_id` is new
+# (Kevin's finding: file_id is NOT recoverable from file_source alone).
+MANIFEST_BUILDER_PICK_MODE_KEY = "manifest_builder_pick_mode"
+MANIFEST_BUILDER_RECENT_CHOICE_KEY = "manifest_builder_recent_choice"
+MANIFEST_BUILDER_FILE_SOURCE_KEY = "manifest_builder_file_source"
+MANIFEST_BUILDER_FILE_ID_KEY = "manifest_builder_file_id"
+MANIFEST_BUILDER_DISPLAY_NAME_KEY = "manifest_builder_display_name"
+MANIFEST_BUILDER_DESCRIPTION_KEY = "manifest_builder_description"
+MANIFEST_BUILDER_KIND_KEY = "manifest_builder_kind"
+MANIFEST_BUILDER_PENDING_TEXT_KEY = "manifest_builder_pending_text"
+MANIFEST_BUILDER_LAST_GENERATED_KEY = "manifest_builder_last_generated"
+
+# Source for "From recent uploads" — entries with `record_id`,
+# `display_name`, and `file_source` keys are surfaced. Today the File
+# page populates `file_upload_history` only with latency rows, so this
+# typically yields an empty list (paste mode default). Follow-up: have
+# the File page also append richer entries with these fields on success.
+FILE_UPLOAD_HISTORY_KEY = "file_upload_history"
+
 HISTORY_DISPLAY_LIMIT = 20
 
 # Polling cadence (seconds elapsed -> sleep before next rerun).
@@ -111,11 +136,11 @@ class _PipelineFailureError(Exception):
 def main() -> None:
     """Render the ingestion page."""
     st.set_page_config(
-        page_title="Ingestion · ADME Control Plane",
-        page_icon="📥",
+        page_title="Manifest · ADME Control Plane",
+        page_icon="📄",
         layout="wide",
     )
-    st.title("📥 Ingest data into ADME")
+    st.title("📄 Submit a manifest")
     st.markdown(
         "Submit an OSDU manifest to the Workflow Service and verify it landed "
         "by querying the Search Service for the records you just loaded."
@@ -134,8 +159,18 @@ def main() -> None:
         f"Endpoint: `{connection.endpoint}`"
     )
 
+    # Sentinel-prime: if the Builder generated a manifest on the previous
+    # run, copy the pending text into the editor's bound key BEFORE the
+    # text_area renders. Streamlit forbids writing to a widget's bound
+    # session key after the widget renders in the same run.
+    if MANIFEST_BUILDER_PENDING_TEXT_KEY in st.session_state:
+        st.session_state[MANIFEST_TEXT_KEY] = st.session_state.pop(
+            MANIFEST_BUILDER_PENDING_TEXT_KEY
+        )
+
     _render_sticky_error()
     _render_input_form(connection)
+    _render_manifest_builder(connection)
     _render_manifest_editor()
     _render_action_row()
     _render_run_status()
@@ -165,6 +200,17 @@ def _ensure_page_defaults() -> None:
 
     st.session_state.setdefault(LAST_WORKFLOW_RESULT_KEY, None)
     st.session_state.setdefault(VERIFICATION_RESULTS_KEY, [])
+
+    # Manifest Builder defaults. Pick mode resolves dynamically when the
+    # builder renders so it can default to "recent" when uploads exist.
+    st.session_state.setdefault(MANIFEST_BUILDER_PICK_MODE_KEY, "paste")
+    st.session_state.setdefault(MANIFEST_BUILDER_RECENT_CHOICE_KEY, "")
+    st.session_state.setdefault(MANIFEST_BUILDER_FILE_SOURCE_KEY, "")
+    st.session_state.setdefault(MANIFEST_BUILDER_FILE_ID_KEY, "")
+    st.session_state.setdefault(MANIFEST_BUILDER_DISPLAY_NAME_KEY, "")
+    st.session_state.setdefault(MANIFEST_BUILDER_DESCRIPTION_KEY, "")
+    st.session_state.setdefault(MANIFEST_BUILDER_KIND_KEY, DEFAULT_DATASET_KIND)
+    st.session_state.setdefault(MANIFEST_BUILDER_LAST_GENERATED_KEY, None)
     st.session_state.setdefault(VERIFICATION_RETRIES_KEY, {})
     st.session_state.setdefault(LAST_LEGAL_TAG_RESULT_KEY, None)
     st.session_state.setdefault(LAST_SUBMIT_RESULT_KEY, None)
@@ -480,6 +526,293 @@ def _render_option_field(
         key=session_key,
         help=help_text,
     )
+
+
+# ---------------------------------------------------------------------------
+# Manifest Builder (expander above the editor)
+# ---------------------------------------------------------------------------
+
+
+GENERATE_MANIFEST_LABEL = "Generate manifest"
+
+
+def _recent_uploads() -> list[dict[str, Any]]:
+    """Return file_upload_history entries that look like recent uploads.
+
+    A "recent upload" entry has non-empty ``record_id``, ``display_name``,
+    and ``file_source`` string fields. Other entries (e.g. latency rows
+    today's File page emits) are filtered out so the selectbox only shows
+    real picks.
+    """
+    history = st.session_state.get(FILE_UPLOAD_HISTORY_KEY, [])
+    if not isinstance(history, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        record_id = entry.get("record_id")
+        display_name = entry.get("display_name")
+        file_source = entry.get("file_source")
+        if (
+            isinstance(record_id, str)
+            and record_id
+            and isinstance(display_name, str)
+            and display_name
+            and isinstance(file_source, str)
+            and file_source
+        ):
+            out.append(
+                {
+                    "record_id": record_id,
+                    "display_name": display_name,
+                    "file_source": file_source,
+                    "description": str(entry.get("description") or ""),
+                }
+            )
+    # Newest first for the selectbox.
+    return list(reversed(out))
+
+
+def _render_manifest_builder(connection: ADMEConnection) -> None:
+    """Render the Builder expander above the manifest text editor.
+
+    The expander offers two pick modes (recent uploads / paste manually),
+    a kind selectbox locked to ``DEFAULT_DATASET_KIND`` for v1, and a
+    Generate button that calls
+    :func:`app.services.manifest_builder.build_file_generic_manifest`
+    using the legal-tag and ACL selectbox values from the form above.
+    On success it primes the editor via ``MANIFEST_BUILDER_PENDING_TEXT_KEY``
+    and reruns. Hand-edited manifests still work — the Builder is additive.
+    """
+    recent = _recent_uploads()
+
+    # Default the radio to "recent" when uploads exist, "paste" otherwise.
+    if recent and not st.session_state.get(MANIFEST_BUILDER_PICK_MODE_KEY):
+        st.session_state[MANIFEST_BUILDER_PICK_MODE_KEY] = "recent"
+    if not recent:
+        st.session_state[MANIFEST_BUILDER_PICK_MODE_KEY] = "paste"
+
+    with st.expander("🛠️ Build manifest", expanded=False):
+        st.caption(
+            "Build a workflow-ready `dataset--File.Generic:1.0.0` manifest "
+            "from a recent upload (or by pasting a FileSource). The "
+            "generated JSON is loaded into the editor below for review "
+            "before you click **Validate & Ingest**."
+        )
+
+        mode_options = ["recent", "paste"]
+        mode_index = (
+            0
+            if st.session_state.get(MANIFEST_BUILDER_PICK_MODE_KEY) == "recent"
+            else 1
+        )
+        st.radio(
+            "Pick the file source",
+            options=mode_options,
+            index=mode_index,
+            format_func=lambda v: (
+                "📂 From recent uploads" if v == "recent" else "✏️ Paste manually"
+            ),
+            key=MANIFEST_BUILDER_PICK_MODE_KEY,
+            horizontal=True,
+        )
+
+        pick_mode = st.session_state.get(
+            MANIFEST_BUILDER_PICK_MODE_KEY, "paste"
+        )
+        picked: dict[str, Any] | None = None
+
+        if pick_mode == "recent":
+            if not recent:
+                st.info(
+                    "No recent uploads in this session — use Paste mode."
+                )
+            else:
+                labels = {
+                    entry["record_id"]: (
+                        f"{entry['display_name']} — {entry['record_id']}"
+                    )
+                    for entry in recent
+                }
+                options = [entry["record_id"] for entry in recent]
+                # If the previously selected record id is no longer in
+                # history (cleared mid-session), fall back to the first.
+                current = st.session_state.get(
+                    MANIFEST_BUILDER_RECENT_CHOICE_KEY, ""
+                )
+                if current not in options:
+                    st.session_state[MANIFEST_BUILDER_RECENT_CHOICE_KEY] = (
+                        options[0]
+                    )
+                st.selectbox(
+                    "Recent upload",
+                    options=options,
+                    format_func=lambda rid: labels.get(rid, rid),
+                    key=MANIFEST_BUILDER_RECENT_CHOICE_KEY,
+                )
+                picked_id = st.session_state[
+                    MANIFEST_BUILDER_RECENT_CHOICE_KEY
+                ]
+                picked = next(
+                    (e for e in recent if e["record_id"] == picked_id), None
+                )
+                # Pre-fill display name + description from the picked entry
+                # if those fields are still blank (don't clobber operator
+                # edits across reruns).
+                if picked is not None:
+                    if not st.session_state.get(
+                        MANIFEST_BUILDER_DISPLAY_NAME_KEY
+                    ):
+                        st.session_state[
+                            MANIFEST_BUILDER_DISPLAY_NAME_KEY
+                        ] = picked["display_name"]
+                    if not st.session_state.get(
+                        MANIFEST_BUILDER_DESCRIPTION_KEY
+                    ):
+                        st.session_state[
+                            MANIFEST_BUILDER_DESCRIPTION_KEY
+                        ] = picked["description"]
+        else:
+            paste_cols = st.columns(2)
+            with paste_cols[0]:
+                st.text_input(
+                    "FileSource (Azure blob path)",
+                    key=MANIFEST_BUILDER_FILE_SOURCE_KEY,
+                    placeholder=(
+                        "https://<account>.blob.core.windows.net/<container>/<path>"
+                    ),
+                    help=(
+                        "The opaque Azure blob path returned by "
+                        "`GET /uploadURL` as `FileSource`."
+                    ),
+                )
+            with paste_cols[1]:
+                st.text_input(
+                    "File record id",
+                    key=MANIFEST_BUILDER_FILE_ID_KEY,
+                    placeholder="opendes:dataset--File.Generic:abc123",
+                    help=(
+                        "The `FileID` returned alongside `FileSource` from "
+                        "`GET /uploadURL`. Not recoverable from FileSource "
+                        "alone — paste both."
+                    ),
+                )
+
+        st.text_input(
+            "Display name",
+            key=MANIFEST_BUILDER_DISPLAY_NAME_KEY,
+            placeholder="my-dataset.csv",
+        )
+        st.text_area(
+            "Description (optional)",
+            key=MANIFEST_BUILDER_DESCRIPTION_KEY,
+            placeholder="Short description of what this dataset contains.",
+            height=80,
+        )
+        st.selectbox(
+            "Kind",
+            options=[DEFAULT_DATASET_KIND],
+            key=MANIFEST_BUILDER_KIND_KEY,
+            help=(
+                "Locked to `dataset--File.Generic:1.0.0` for v1. More "
+                "kinds will be added as the workflow supports them."
+            ),
+        )
+
+        clicked = st.button(
+            GENERATE_MANIFEST_LABEL,
+            type="primary",
+            key="manifest_builder_generate_button",
+        )
+
+        if clicked:
+            _handle_generate_click(
+                connection=connection,
+                pick_mode=pick_mode,
+                picked=picked,
+            )
+
+
+def _handle_generate_click(
+    *,
+    connection: ADMEConnection,
+    pick_mode: str,
+    picked: dict[str, Any] | None,
+) -> None:
+    """Validate Builder inputs, call the service, prime the editor."""
+    if pick_mode == "recent":
+        if picked is None:
+            st.error(
+                "❌ No recent upload selected — pick one from the "
+                "dropdown or switch to Paste mode."
+            )
+            return
+        file_source = picked["file_source"]
+        file_id = picked["record_id"]
+    else:
+        file_source = str(
+            st.session_state.get(MANIFEST_BUILDER_FILE_SOURCE_KEY) or ""
+        ).strip()
+        file_id = str(
+            st.session_state.get(MANIFEST_BUILDER_FILE_ID_KEY) or ""
+        ).strip()
+
+    display_name = str(
+        st.session_state.get(MANIFEST_BUILDER_DISPLAY_NAME_KEY) or ""
+    ).strip()
+    description = str(
+        st.session_state.get(MANIFEST_BUILDER_DESCRIPTION_KEY) or ""
+    )
+    kind = str(
+        st.session_state.get(MANIFEST_BUILDER_KIND_KEY) or ""
+    ).strip() or DEFAULT_DATASET_KIND
+    legal_tag = str(st.session_state.get(LEGAL_TAG_KEY) or "").strip()
+    acl_owners = str(st.session_state.get(ACL_OWNERS_KEY) or "").strip()
+    acl_viewers = str(st.session_state.get(ACL_VIEWERS_KEY) or "").strip()
+
+    missing: list[str] = []
+    if not file_source:
+        missing.append("FileSource")
+    if not file_id:
+        missing.append("File record id")
+    if not display_name:
+        missing.append("Display name")
+    if not legal_tag:
+        missing.append("Legal tag (set above)")
+    if not acl_owners:
+        missing.append("ACL owners group (set above)")
+    if not acl_viewers:
+        missing.append("ACL viewers group (set above)")
+    if missing:
+        bullets = "\n".join(f"- {field}" for field in missing)
+        st.error(
+            "❌ Cannot generate manifest — please fill in:\n" + bullets
+        )
+        return
+
+    try:
+        manifest = build_file_generic_manifest(
+            file_source=file_source,
+            file_id=file_id,
+            display_name=display_name,
+            description=description,
+            kind=kind,
+            legal_tag=legal_tag,
+            acl_owners=acl_owners,
+            acl_viewers=acl_viewers,
+            data_partition_id=connection.data_partition_id,
+        )
+    except ValueError as exc:
+        st.error(f"❌ Could not build manifest: {exc}")
+        return
+
+    st.session_state[MANIFEST_BUILDER_LAST_GENERATED_KEY] = manifest
+    st.session_state[MANIFEST_BUILDER_PENDING_TEXT_KEY] = json.dumps(
+        manifest, indent=2
+    )
+    st.success("✅ Manifest generated — loaded into the editor below.")
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------

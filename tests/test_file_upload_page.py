@@ -1,4 +1,4 @@
-"""Tests for the ADME file-upload page (``app/pages/6_📂_File_Upload.py``).
+"""Tests for the ADME file-upload page (``app/pages/6_📂_File.py``).
 
 Mirrors the ingestion-page test pattern: load the script via importlib
 with a ``StreamlitRecorder`` substituted for ``streamlit``, seed session
@@ -36,7 +36,7 @@ FILE_UPLOAD_PAGE_PATH = (
     Path(__file__).resolve().parents[1]
     / "app"
     / "pages"
-    / "6_📂_File_Upload.py"
+    / "6_📂_File.py"
 )
 
 # Locked session keys (per Satya's contract — Charlie tests these names).
@@ -657,16 +657,26 @@ def test_happy_path_runs_all_three_phases_and_records_result(
     assert result.ok is True
     assert result.record_id == "opendes:dataset--File.Generic:abc"
 
-    # History has 3 entries.
+    # History has 3 latency entries plus 1 upload_summary row.
     history = streamlit_recorder.session_state[FILE_UPLOAD_HISTORY_KEY]
     assert isinstance(history, list)
-    assert len(history) == 3
-    assert [row["endpoint"] for row in history] == [
+    assert len(history) == 4
+    api_rows = [row for row in history if row.get("endpoint")]
+    assert [row["endpoint"] for row in api_rows] == [
         "upload-url",
         "upload-bytes",
         "metadata",
     ]
-    assert all(row["ok"] for row in history)
+    assert all(row["ok"] for row in api_rows)
+    summary_rows = [
+        row for row in history if row.get("kind") == "upload_summary"
+    ]
+    assert len(summary_rows) == 1
+    summary = summary_rows[0]
+    assert summary["record_id"] == "opendes:dataset--File.Generic:abc"
+    assert summary["display_name"] == "well.las"
+    assert summary["file_source"] == "/staging/abc"
+    assert summary["timestamp"].endswith("Z")
 
 
 # ===========================================================================
@@ -790,6 +800,12 @@ def test_phase3_failure_sticky_error_mentions_file_id_and_warns_unregistered(
     # The operator-recovery warning hints at unregistered file.
     assert "uploaded" in sticky.lower()
     assert "metadata" in sticky.lower()
+    # Failed metadata → NO upload_summary row appended.
+    history = streamlit_recorder.session_state[FILE_UPLOAD_HISTORY_KEY]
+    summary_rows = [
+        row for row in history if row.get("kind") == "upload_summary"
+    ]
+    assert summary_rows == []
 
 
 # ===========================================================================
@@ -897,7 +913,7 @@ def test_view_in_search_page_link_target(
         for call in streamlit_recorder.calls_named("page_link")
     ]
     assert any(
-        "5_🔍_Search.py" in target for target in page_link_targets
+        "7_🔍_Search.py" in target for target in page_link_targets
     ), f"View in Search page_link missing; got {page_link_targets!r}"
 
 

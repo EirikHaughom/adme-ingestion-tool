@@ -208,11 +208,39 @@ def validate_manifest_json(
             None,
         )
 
+    # Sections to validate as flat lists of records. ``Data`` is
+    # special-cased below because the canonical Work-Product-Component
+    # shape emitted by ``app.services.manifest_builder`` is an *object*
+    # containing ``WorkProductComponents`` / ``WorkProduct`` /
+    # ``Datasets`` rather than a flat list.
     present_sections: list[tuple[str, list]] = []
+    has_any_section = False
     for key in _MANIFEST_SECTION_KEYS:
         if key not in manifest:
             continue
+        has_any_section = True
         value = manifest[key]
+        if key == "Data":
+            if isinstance(value, list):
+                present_sections.append((key, value))
+                continue
+            if isinstance(value, dict):
+                ok, message = _validate_data_object(value)
+                if not ok:
+                    return False, message, None
+                # Per-record validation is handled inside
+                # ``_validate_data_object`` for Datasets and
+                # WorkProductComponents.
+                continue
+            return (
+                False,
+                (
+                    "Manifest section 'Data' must be a list of "
+                    "records or an object with Datasets/"
+                    "WorkProductComponents/WorkProduct."
+                ),
+                None,
+            )
         if not isinstance(value, list):
             return (
                 False,
@@ -221,7 +249,7 @@ def validate_manifest_json(
             )
         present_sections.append((key, value))
 
-    if not present_sections:
+    if not has_any_section:
         return (
             False,
             (
@@ -254,6 +282,54 @@ def validate_manifest_json(
                 )
 
     return True, "", parsed
+
+
+def _validate_data_object(data_obj: dict) -> tuple[bool, str]:
+    """Validate the WPC-shaped ``Data`` object.
+
+    Accepts ``Datasets`` (list of record dicts), ``WorkProductComponents``
+    (list of record dicts), and ``WorkProduct`` (record dict). Each
+    record dict must carry a non-empty string ``kind``. Unknown keys
+    are allowed for forward compatibility.
+    """
+    list_subkeys = ("Datasets", "WorkProductComponents")
+    for subkey in list_subkeys:
+        if subkey not in data_obj:
+            continue
+        sub_value = data_obj[subkey]
+        if not isinstance(sub_value, list):
+            return (
+                False,
+                f"Manifest section 'Data.{subkey}' must be a list.",
+            )
+        for index, item in enumerate(sub_value):
+            if not isinstance(item, dict):
+                return (
+                    False,
+                    (
+                        f"Manifest item at Data.{subkey}[{index}] "
+                        "must be a JSON object."
+                    ),
+                )
+            kind = item.get("kind")
+            if not isinstance(kind, str) or not kind.strip():
+                return (
+                    False,
+                    (
+                        f"Manifest item at Data.{subkey}[{index}] "
+                        "is missing a string 'kind'."
+                    ),
+                )
+
+    if "WorkProduct" in data_obj:
+        wp = data_obj["WorkProduct"]
+        if not isinstance(wp, dict):
+            return (
+                False,
+                "Manifest section 'Data.WorkProduct' must be an object.",
+            )
+
+    return True, ""
 
 
 def check_legal_tag(

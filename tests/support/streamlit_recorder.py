@@ -1,6 +1,6 @@
 """Test doubles for Streamlit page assertions.
 
-Extensions added for the ingestion page (``app/pages/4_📥_Ingestion.py``):
+Extensions added for the ingestion page (``app/pages/5_📄_Manifest.py``):
 
 - ``columns(spec)`` returns a list of ``StreamlitContext`` instances so the
   page can do ``cols = st.columns(3); with cols[0]: ...``.  The page uses
