@@ -541,8 +541,12 @@ def test_submit_pipeline_with_placeholders_substitutes_then_revalidates(
     # legal-tag check ran with the substituted (cleaned) tag value.
     assert spy.legal, "legal-tag check must fire after successful substitution"
     assert spy.legal[0][2] == "tag-1"
-    # Manifest text in session is the substituted version (no `{{` markers).
-    final_text = streamlit_recorder.session_state[MANIFEST_TEXT_KEY]
+    # The resolved manifest (placeholders substituted) is captured in a
+    # separate session key so we never write back to the text_area widget's
+    # bound key (Streamlit forbids that after render).
+    final_text = streamlit_recorder.session_state[
+        "ingestion_resolved_manifest_text"
+    ]
     assert isinstance(final_text, str)
     assert "{{" not in final_text
     assert "tag-1-kind" in final_text

@@ -76,6 +76,7 @@ VERIFICATION_RETRIES_KEY = "ingestion_verification_retries"
 LAST_LEGAL_TAG_RESULT_KEY = "ingestion_last_legal_tag_result"
 LAST_SUBMIT_RESULT_KEY = "ingestion_last_submit_result"
 LAST_CORRELATION_ID_KEY = "ingestion_last_correlation_id"
+RESOLVED_MANIFEST_TEXT_KEY = "ingestion_resolved_manifest_text"
 
 # --- Dropdown option-cache keys (autorun-once load of legal tags + groups) -
 INGESTION_OPTIONS_AUTORUN_KEY = "ingestion_options_autorun_done"
@@ -620,7 +621,7 @@ def _run_submit_pipeline(connection: ADMEConnection) -> None:
                         f"substitution: {error_message}"
                     )
 
-            st.session_state[MANIFEST_TEXT_KEY] = substituted_text
+            st.session_state[RESOLVED_MANIFEST_TEXT_KEY] = substituted_text
             st.success("✅ Manifest JSON validated.")
 
             # ---------- Step 2: legal-tag check ------------------------
