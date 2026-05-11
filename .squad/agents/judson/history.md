@@ -169,3 +169,12 @@ change required.
 - Added `"app/pages/4_🏷️_Legal_Tags.py" = ["N999"]` to `[tool.ruff.lint.per-file-ignores]` in `pyproject.toml` (matches Settings + Entitlements + Ingestion entries; Streamlit page filenames intentionally include emoji + digit prefixes).
 - Did NOT touch Kevin's modules (`app/services/legal_tags.py`, `app/models/osdu.py`). Did NOT touch `connection_state.py` (page-scoped state only — Satya's spec for `legal_tags_history` clearing on connection change can land later in a connection_state hook update; today the page just relies on session lifetime). Did NOT touch tests (Charlie owns) or `app/main.py` (page_link parity is a small cross-page nit, not in scope here).
 - Validation: `ruff check "app/pages/4_🏷️_Legal_Tags.py"` -> All checks passed. `mypy "app/pages/4_🏷️_Legal_Tags.py"` -> Success: no issues found in 1 source file. Kevin's service + model work was already merged when I ran the checks, so the import contract validated cleanly on first try; no temporary mypy errors to report.
+
+## Learnings
+
+### 2026-05-11 — Search page (5_🔍_Search.py)
+- Shipped the Operate › Search page per Satya's contract. All 11 `search_*` session keys locked; pagination uses Darryl's 10,000 offset+limit ceiling.
+- Key pattern from 5/11 ingestion bug: text_input bound to `search_query_text` is NEVER reassigned post-render. Search/Refresh/pagination handlers snapshot the current widget value into `search_resolved_query` and call `search_records` from that. Anyone touching this page must keep that split.
+- Row selection: used a selectbox of ids (not `st.dataframe(on_select=...)`). Dataframe row-click is unreliable in Streamlit 1.57.
+- Page registered in `app/main.py` under the Operate group after Ingestion. New emoji filename added to `pyproject.toml` per-file-ignores for N999.
+- `mypy app` and `ruff check` both clean; `pytest -q tests/test_main.py` 6/6.

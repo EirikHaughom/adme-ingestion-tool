@@ -108,6 +108,75 @@ class SearchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordSummary:
+    """One hit from ``POST /api/search/v2/query`` projected for list views.
+
+    ``source`` is the raw record block (or ``returnedFields`` projection)
+    the server included for this hit; the page renders a truncated
+    preview from it. Times are passed through verbatim as ISO-8601
+    strings so we never lose precision rounding through ``datetime``.
+    """
+
+    id: str
+    kind: str
+    create_time: str | None = None
+    version: int | None = None
+    source: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPageResult:
+    """Outcome of one Search-v2 ``/query`` page request."""
+
+    kind: str
+    query: str | None = None
+    offset: int = 0
+    limit: int = 0
+    records: list[RecordSummary] = field(default_factory=list)
+    total_count: int | None = None
+    has_more: bool = False
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class KindAggregationResult:
+    """Outcome of the kinds-discovery call.
+
+    ``from_aggregation`` is ``True`` when Search aggregation supplied the
+    list and ``False`` when we fell back to sampling the first page of
+    records and extracting unique kinds (Darryl's option B-equivalent).
+    """
+
+    kinds: list[str] = field(default_factory=list)
+    from_aggregation: bool = True
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecordDetailResult:
+    """Outcome of ``GET /api/storage/v2/records/{id}``."""
+
+    record_id: str
+    record: dict | None = None
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LegalTag:
     """A single legal tag as returned by the ADME Legal service.
 

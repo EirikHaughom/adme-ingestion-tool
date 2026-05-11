@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from app.models.osdu import (
+    KindAggregationResult,
     LegalTag,
     LegalTagCheckResult,
     LegalTagDetailResult,
@@ -14,6 +15,9 @@ from app.models.osdu import (
     LegalTagOperationResult,
     LegalTagPropertiesResult,
     LegalTagPropertiesSpec,
+    RecordDetailResult,
+    RecordSummary,
+    SearchPageResult,
     SearchResult,
     WorkflowRunResult,
     WorkflowStatus,
@@ -331,3 +335,160 @@ def test_legal_tag_properties_result_construction_and_frozen() -> None:
     with pytest.raises(FrozenInstanceError):
         result.ok = False  # type: ignore[misc]
 
+
+
+# ---------------------------------------------------------------------------
+# Search dataclasses (frozen + slotted)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Search dataclasses (frozen + slotted)
+# ---------------------------------------------------------------------------
+
+
+_SEARCH_CLASSES = [
+    RecordSummary,
+    SearchPageResult,
+    KindAggregationResult,
+    RecordDetailResult,
+]
+
+
+@pytest.mark.parametrize("cls", _SEARCH_CLASSES)
+def test_search_dataclass_uses_slots(cls: type) -> None:
+    assert "__slots__" in vars(cls), (
+        f"{cls.__name__} must be declared with slots=True"
+    )
+
+
+def test_record_summary_construction_with_required_and_defaults() -> None:
+    rec = RecordSummary(id="opendes:doc:1", kind="osdu:wks:reference-data:1.0.0")
+    assert rec.id == "opendes:doc:1"
+    assert rec.kind == "osdu:wks:reference-data:1.0.0"
+    assert rec.create_time is None
+    assert rec.version is None
+    assert rec.source == {}
+
+
+def test_record_summary_with_all_fields() -> None:
+    rec = RecordSummary(
+        id="opendes:doc:1",
+        kind="k",
+        create_time="2024-01-01T00:00:00Z",
+        version=3,
+        source={"data": {"foo": "bar"}},
+    )
+    assert rec.version == 3
+    assert rec.create_time == "2024-01-01T00:00:00Z"
+    assert rec.source == {"data": {"foo": "bar"}}
+
+
+def test_record_summary_is_frozen() -> None:
+    rec = RecordSummary(id="x", kind="k")
+    with pytest.raises(FrozenInstanceError):
+        rec.id = "other"  # type: ignore[misc]
+
+
+def test_record_summary_defaults_are_per_instance() -> None:
+    a = RecordSummary(id="x", kind="k")
+    b = RecordSummary(id="y", kind="k")
+    assert a.source is not b.source
+
+
+def test_search_page_result_defaults_and_construction() -> None:
+    result = SearchPageResult(kind="k")
+    assert result.kind == "k"
+    assert result.query is None
+    assert result.offset == 0
+    assert result.limit == 0
+    assert result.records == []
+    assert result.total_count is None
+    assert result.has_more is False
+    assert result.ok is False
+    assert result.http_status is None
+    assert result.latency_ms == 0.0
+    assert result.correlation_id is None
+    assert result.error_message is None
+    assert result.raw_response is None
+
+
+def test_search_page_result_with_records() -> None:
+    records = [RecordSummary(id="a", kind="k")]
+    result = SearchPageResult(
+        kind="k", records=records, ok=True, http_status=200, total_count=1
+    )
+    assert result.records is records
+    assert result.ok is True
+    assert result.total_count == 1
+
+
+def test_search_page_result_is_frozen() -> None:
+    result = SearchPageResult(kind="k")
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
+
+
+def test_search_page_result_default_records_are_per_instance() -> None:
+    a = SearchPageResult(kind="k")
+    b = SearchPageResult(kind="k")
+    assert a.records is not b.records
+
+
+def test_kind_aggregation_result_defaults_and_construction() -> None:
+    result = KindAggregationResult()
+    assert result.kinds == []
+    assert result.from_aggregation is True
+    assert result.ok is False
+    assert result.http_status is None
+    assert result.latency_ms == 0.0
+    assert result.correlation_id is None
+    assert result.error_message is None
+    assert result.raw_response is None
+
+
+def test_kind_aggregation_result_from_aggregation_false_branch() -> None:
+    result = KindAggregationResult(
+        kinds=["osdu:k:a:1"], from_aggregation=False, ok=True, http_status=200
+    )
+    assert result.from_aggregation is False
+    assert result.kinds == ["osdu:k:a:1"]
+
+
+def test_kind_aggregation_result_is_frozen() -> None:
+    result = KindAggregationResult()
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
+
+
+def test_kind_aggregation_result_default_kinds_per_instance() -> None:
+    a = KindAggregationResult()
+    b = KindAggregationResult()
+    assert a.kinds is not b.kinds
+
+
+def test_record_detail_result_defaults_and_construction() -> None:
+    result = RecordDetailResult(record_id="opendes:doc:1")
+    assert result.record_id == "opendes:doc:1"
+    assert result.record is None
+    assert result.ok is False
+    assert result.http_status is None
+    assert result.latency_ms == 0.0
+    assert result.correlation_id is None
+    assert result.error_message is None
+    assert result.raw_response is None
+
+
+def test_record_detail_result_with_record() -> None:
+    payload = {"id": "opendes:doc:1", "kind": "k"}
+    result = RecordDetailResult(
+        record_id="opendes:doc:1", record=payload, ok=True, http_status=200
+    )
+    assert result.record is payload
+    assert result.ok is True
+
+
+def test_record_detail_result_is_frozen() -> None:
+    result = RecordDetailResult(record_id="x")
+    with pytest.raises(FrozenInstanceError):
+        result.ok = True  # type: ignore[misc]
