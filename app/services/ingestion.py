@@ -1,7 +1,8 @@
 """ADME manifest-ingestion service calls.
 
 Sibling to :mod:`app.services.entitlements`: stdlib + ``requests`` only,
-a 5-second per-call timeout, and *no internal retries* — the Streamlit
+a 5-second per-call timeout (30 s for the submit endpoint, which kicks
+off DAG creation server-side), and *no internal retries* — the Streamlit
 page owns polling and re-run UX. Each public function returns a frozen
 result dataclass from :mod:`app.models.osdu` describing exactly what
 happened, including a server-supplied correlation identifier when one
@@ -33,7 +34,7 @@ from app.services.legal_tags import LEGAL_TAGS_PATH
 
 logger = logging.getLogger(__name__)
 
-INGESTION_TIMEOUT_SECONDS = 5
+INGESTION_TIMEOUT_SECONDS = 30
 
 # ``LEGAL_TAGS_PATH`` is owned by :mod:`app.services.legal_tags` and
 # re-exported here so existing callers keep working. Single source of
