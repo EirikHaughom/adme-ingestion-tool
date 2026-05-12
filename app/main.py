@@ -35,6 +35,7 @@ INGEST_PAGE_PATH = "pages/4_📥_Ingest.py"
 INGESTION_PAGE_PATH = "pages/5_📄_Manifest.py"
 FILE_UPLOAD_PAGE_PATH = "pages/6_📂_File.py"
 SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
+HISTORY_PAGE_PATH = "pages/8_📊_History.py"
 
 
 def _render_home() -> None:
@@ -174,6 +175,11 @@ def main() -> None:
         title="Search",
         icon="🔍",
     )
+    history_page = st.Page(
+        HISTORY_PAGE_PATH,
+        title="History",
+        icon="📊",
+    )
 
     nav = st.navigation(
         {
@@ -184,7 +190,7 @@ def main() -> None:
                 legal_tags_page,
             ],
             "Ingest": [ingest_landing_page, manifest_page, file_page],
-            "Operate": [search_page],
+            "Operate": [search_page, history_page],
         }
     )
     nav.run()
