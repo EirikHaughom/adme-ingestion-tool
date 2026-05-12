@@ -1,0 +1,22 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--FacilityEventType:Sidetrack",
+            "kind": "osdu:wks:reference-data--FacilityEventType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Sidetrack",
+                "Code": "Sidetrack"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

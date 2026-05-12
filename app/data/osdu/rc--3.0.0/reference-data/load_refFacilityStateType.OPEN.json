@@ -1,0 +1,175 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--FacilityStateType:Abandoned",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Abandoned",
+                "Code": "Abandoned"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:Completed",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Completed",
+                "Code": "Completed"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:ShutIn",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Shut In",
+                "Code": "ShutIn"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:Observing",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Observing",
+                "Code": "Observing"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:Plugged",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Plugged",
+                "Code": "Plugged"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:PluggedandSidetracked",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Plugged and Sidetracked",
+                "Code": "PluggedandSidetracked"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:ProducingInjecting",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "ProducingInjecting",
+                "Code": "ProducingInjecting"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:Suspended",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Suspended",
+                "Code": "Suspended"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:TechnicalFailSidetracked",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Technical Fail Sidetracked",
+                "Code": "TechnicalFailSidetracked"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--FacilityStateType:Unknown",
+            "kind": "osdu:wks:reference-data--FacilityStateType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Unknown",
+                "Code": "Unknown"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}
