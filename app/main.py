@@ -35,6 +35,7 @@ INGEST_PAGE_PATH = "pages/4_📥_Ingest.py"
 INGESTION_PAGE_PATH = "pages/5_📄_Manifest.py"
 FILE_UPLOAD_PAGE_PATH = "pages/6_📂_File.py"
 SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
+BULK_LOAD_PAGE_PATH = "pages/9_📥_Bulk_Load.py"
 
 
 def _render_home() -> None:
@@ -169,6 +170,11 @@ def main() -> None:
         title="File",
         icon="📂",
     )
+    bulk_load_page = st.Page(
+        BULK_LOAD_PAGE_PATH,
+        title="Bulk Load",
+        icon="📥",
+    )
     search_page = st.Page(
         SEARCH_PAGE_PATH,
         title="Search",
@@ -183,7 +189,12 @@ def main() -> None:
                 entitlements_page,
                 legal_tags_page,
             ],
-            "Ingest": [ingest_landing_page, manifest_page, file_page],
+            "Ingest": [
+                ingest_landing_page,
+                manifest_page,
+                file_page,
+                bulk_load_page,
+            ],
             "Operate": [search_page],
         }
     )

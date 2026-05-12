@@ -1,0 +1,20 @@
+{
+  "id": "volve",
+  "display_name": "Volve Open Dataset",
+  "source_url": "https://community.opengroup.org/osdu/data/open-test-data",
+  "notice_path": "NOTICE.md",
+  "tiers": {
+    "reference-data": {
+      "enabled": false,
+      "reason": "not yet vendored \u2014 see backlog"
+    },
+    "master-data": {
+      "enabled": false,
+      "reason": "not yet vendored \u2014 see backlog"
+    },
+    "work-products": {
+      "enabled": false,
+      "reason": "not yet vendored \u2014 see backlog"
+    }
+  }
+}

@@ -11,8 +11,11 @@ Do not change field names or types without updating both sides.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 
@@ -306,3 +309,72 @@ class FileMetadataResult:
     error_message: str | None = None
     record_id: str | None = None
     record_version: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetTier:
+    """One tier (reference-data / master-data / work-products) of a dataset.
+
+    Either ``manifest_glob`` is set (enabled tier with manifests to walk)
+    or ``reason`` is set (disabled tier with a human-readable explanation
+    surfaced in the page). ``description`` is optional UI copy.
+    """
+
+    enabled: bool
+    manifest_glob: str | None = None
+    description: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetDescriptor:
+    """A Bulk Load dataset registered on disk under ``app/data/datasets/``.
+
+    ``root_dir`` is the absolute path to the dataset folder; relative
+    ``manifest_glob`` and ``notice_path`` values are resolved against
+    it. ``tiers`` is keyed by tier name (``reference-data`` etc.).
+    """
+
+    id: str
+    display_name: str
+    source_url: str
+    notice_path: str
+    tiers: Mapping[str, DatasetTier]
+    root_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestPreview:
+    """A single manifest file inspected by ``preview_tier`` (no network).
+
+    ``record_section`` is the OSDU manifest section the records were
+    counted from (``ReferenceData``, ``MasterData``, or ``Data`` for
+    work-products).
+    """
+
+    path: Path
+    filename: str
+    kind: str
+    record_count: int
+    record_section: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitResult:
+    """Outcome of one manifest submit inside ``submit_tier``.
+
+    ``status`` is ``"success"`` when ``submit_manifest`` returned a run
+    id and ``"error"`` otherwise. ``run_id`` and ``record_id`` are the
+    server-supplied identifiers from the workflow response when
+    available.
+    """
+
+    manifest_path: Path
+    filename: str
+    status: str
+    run_id: str | None
+    record_id: str | None
+    error: str | None
+    submitted_at: datetime
+
+

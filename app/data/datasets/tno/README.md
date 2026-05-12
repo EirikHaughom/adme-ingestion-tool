@@ -17,5 +17,9 @@ schemas + reference-data.
 
 ## Status
 
-Empty placeholder. The v1 Bulk Load page only writes reference-data and
-does not need anything from this folder yet.
+The v1 Bulk Load page only writes reference-data and does not need
+anything from this folder yet. The `dataset.json` in this folder
+registers TNO with the Bulk Load registry; its `reference-data` tier
+points at the shared `app/data/osdu/rc--3.0.0/reference-data/` glob,
+and `master-data` + `work-products` are disabled with `reason="v2 — not
+yet vendored"`.

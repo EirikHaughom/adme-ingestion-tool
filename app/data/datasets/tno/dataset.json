@@ -1,0 +1,21 @@
+{
+  "id": "tno",
+  "display_name": "TNO Open Test Data",
+  "source_url": "https://community.opengroup.org/osdu/data/open-test-data",
+  "notice_path": "../../osdu/rc--3.0.0/NOTICE.md",
+  "tiers": {
+    "reference-data": {
+      "enabled": true,
+      "manifest_glob": "../../osdu/rc--3.0.0/reference-data/load_*.json",
+      "description": "13 generic OSDU reference-data lookup tables (AliasNameType, DrillingReasonType, FacilityEventType, FacilityStateType, GeoPoliticalEntityType, MaterialType, OperatingEnvironment, SchemaFormatType, TrajectoryStationPropertyType, and related)."
+    },
+    "master-data": {
+      "enabled": false,
+      "reason": "v2 \u2014 not yet vendored"
+    },
+    "work-products": {
+      "enabled": false,
+      "reason": "v2 \u2014 not yet vendored"
+    }
+  }
+}

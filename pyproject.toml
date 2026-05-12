@@ -38,6 +38,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "app/pages/5_📄_Manifest.py" = ["N999"]
 "app/pages/6_📂_File.py" = ["N999"]
 "app/pages/7_🔍_Search.py" = ["N999"]
+"app/pages/9_📥_Bulk_Load.py" = ["N999"]
 
 [tool.mypy]
 python_version = "3.11"
