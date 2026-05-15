@@ -39,6 +39,7 @@ from app.models.connection import (  # noqa: E402
     AuthMethod,
     ServiceHealthResult,
 )
+from app.services import settings_store  # noqa: E402
 from app.services.auth import (  # noqa: E402
     AuthenticationError,
     complete_user_auth_flow,
@@ -92,7 +93,8 @@ def main() -> None:
         "OSDU service before starting an operator workflow."
     )
     st.caption(
-        "Client secrets stay in Streamlit session state only and are cleared "
+        "Service-principal client secrets are stored in your OS credential "
+        "store; access tokens stay in Streamlit session state and are cleared "
         "when the session ends."
     )
 
@@ -255,7 +257,10 @@ def _render_connection_form(existing_connection: ADMEConnection | None) -> None:
                 ),
                 type="password",
             )
-            st.caption("Client secret is masked and stored only for this session.")
+            st.caption(
+                "Client secret is masked and saved in your OS credential store "
+                "(never in the settings database)."
+            )
         else:
             st.info(USER_IMPERSONATION_GUIDANCE)
 
@@ -299,7 +304,11 @@ def _handle_form_action(
         return
 
     connection_changed = existing_connection != connection
-    save_connection(st.session_state, connection)
+    try:
+        save_connection(st.session_state, connection)
+    except settings_store.SettingsStoreError as exc:
+        st.error(f"Connection settings could not be saved: {exc}")
+        return
 
     if test_clicked:
         clear_health_state(st.session_state)

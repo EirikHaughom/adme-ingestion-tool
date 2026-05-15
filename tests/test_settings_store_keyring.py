@@ -16,7 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.models.connection import ADMEConnection, AuthMethod
-from app.services import settings_store
 from app.services.settings_store import (
     KEYRING_SERVICE_NAME,
     SettingsStoreError,

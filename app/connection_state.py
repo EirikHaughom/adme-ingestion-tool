@@ -94,17 +94,18 @@ def save_connection(
 ) -> None:
     """Persist the connection for the active Streamlit session and to disk.
 
-    Session-state behavior is unchanged: if the new connection differs from
-    the current one, stale user auth/health are cleared.  After updating
-    session state we also upsert the connection in the local SQLite store
-    under ``name`` (default: ``"default"`` for the v1 single-slot UX) and
-    mark it active.  ``client_secret`` is never written to disk.
+    The durable store is updated before session state so failed persistence
+    never leaves the current Streamlit session showing unsaved settings.  If
+    the new connection differs from the current one, stale user auth/health
+    are cleared after the durable save succeeds.
     """
-    if get_connection(session_state) != connection:
-        clear_user_auth_state(session_state)
-    session_state[CONNECTION_KEY] = connection
+    connection_changed = get_connection(session_state) != connection
     settings_store.save_connection(name, connection)
     settings_store.set_active_connection(name)
+
+    if connection_changed:
+        clear_user_auth_state(session_state)
+    session_state[CONNECTION_KEY] = connection
 
 
 def forget_saved_connection(
