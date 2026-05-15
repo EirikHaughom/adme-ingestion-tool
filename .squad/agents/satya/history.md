@@ -126,3 +126,31 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - Page: identity card derived from my-groups response (memberEmail + desId/OID); my-groups primary card; all-groups demoted to secondary expander; pre-flight guard renders friendly error and skips HTTP when OID missing.
 - History label for the per-user call is the literal string `members.{oid}.groups` — keeps chart axes/session history free of per-user OIDs.
 - Handoff: Kevin (service + token_utils), Judson (page rewire), Charlie (delete member-self tests, add token_utils + my-groups tests, update page tests). No Scott, no new deps.
+- 2026-05-05T19:48:42.932+02:00: Storage architecture plan — chose SQLite (via SQLAlchemy 2.x + Alembic) as dev default; production uses operator-supplied PostgreSQL through a single `DATABASE_URL` env var. Rejected PGlite because it is JS/WASM only and has no Python embedding story; SQLite gives the same single-file/zero-install outcome with stdlib driver support.
+- 2026-05-05T19:48:42.932+02:00: Storage scope kept deliberately narrow for Phase 1: connection_profile + health_run_summary only. Secrets (client_secret, MSAL tokens) are forbidden in the DB and Charlie gates that boundary. `ADMEConnection` stays a dataclass; repositories return domain dataclasses, not ORM objects, so existing contracts in `app/connection_state.py` and `app/models/connection.py` are unaffected.
+- 2026-05-05T19:48:42.932+02:00: ORM portability rule: dialect-portable column types only (no `JSONB`, no `ARRAY`, no Postgres-only server defaults). Alembic auto-upgrade is allowed on SQLite startup but Postgres operators must run migrations explicitly. Phase ordering is Kevin (storage layer + repos) -> Judson (Settings/Welcome wiring) -> Scott (prod deploy + secret-store decision) -> Charlie (matrix tests).
+- 2026-05-05T19:48:42.932+02:00: Open follow-on decisions to track: (1) production secret storage strategy owned by Scott, (2) multi-operator scoping model when we move past single-operator, (3) whether to publish a `[postgres]` install extra.
+
+## 2026-05-05 Storage implementation review (APPROVE)
+- Verified storage boundary lives under app/storage with repository/domain interface (ConnectionProfile, HealthRunSummary) outside ORM rows.
+- Defaults to SQLite at .adme/adme.db when DATABASE_URL is unset; invalid or non-sqlite/non-postgresql URLs raise instead of falling back, satisfying the no-broken-prod-fallback rule.
+- Connection profile persistence rejects client_secret at the repository and the storage_bridge strips it before crossing the boundary; ADMEConnection rebuilt from rows always has client_secret=''. No MSAL/auth code/token persistence.
+- Database URLs redacted via safe_description; raw URL hidden from StorageConfig repr.
+- SQLite dev auto-migrates via Alembic on ensure_storage_ready; PostgreSQL gets a head-revision check that raises StorageMigrationError with operator guidance instead of auto-upgrading.
+- Settings/Welcome hydrate persisted profile and latest health run without touching auth state; user impersonation and client_secret remain session-only.
+- Coordinator validation passed: pytest 101 passed/1 skipped, ruff clean, mypy clean.
+- Non-blocking follow-ups: storage_bridge reflective dispatch (_first_callable / _accepts_keyword) is more elastic than needed now that app.storage exports a stable API; consider trimming once no alternate storage backends are anticipated. load_persisted_connection_state skips restoring saved health when a session connection already exists - acceptable but worth a Judson UX pass later.
+
+## 2026-05-06T06:44:31.579Z: PR #9 Storage Comparison Review
+
+**Finding:** Local implementation satisfies all acceptance criteria with strong secret rejection/redaction and complete models. PR #9 adds surface features but lacks PostgreSQL production path and complete health/migration coverage.
+
+**Rationale:**
+- Local: SQLAlchemy 2.x + Alembic boundary at pp/storage/ package level
+- SQLite default + PostgreSQL production fully specified
+- Secret rejection strong: client_secret rejected before persistence
+- StorageConfig.url redacted for safety
+- Profile and health models complete
+- All tests passing (101 passed, 1 skipped)
+
+**Recommendation:** STICK WITH LOCAL; close PR #9 as superseded. Cherry-pick test isolation and raw-bytes secret assertions if beneficial.

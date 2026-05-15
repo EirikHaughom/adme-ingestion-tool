@@ -126,3 +126,20 @@ change required.
 - Chart legend: latency-chart pivot now keys on a derived `display_endpoint` column built via `frame["endpoint"].str.replace(r"^members\..*\.groups$", "my groups", regex=True)`. The history table still shows the raw endpoint (members.{oid}.groups) so operators retain the OID for diagnostics / correlation-id matching. Pattern is regex anchored end-to-end so it doesn't accidentally collapse a future `members.something.else` shape.
 - Clear-history button now resets `LAST_MY_GROUPS_KEY` + `LAST_GROUPS_KEY`; old `LAST_MEMBER_KEY` references all gone.
 - ruff + mypy clean. Did NOT touch tests (Charlie owns), did NOT touch services, did NOT touch connection_state.
+## 2026-05-05T20:00:00.287+02:00 Storage UI Persistence Wiring
+- Added Streamlit startup hydration through `app.storage_bridge` so Welcome and Settings can load the active saved profile plus latest validation without storing auth material in session persistence.
+- Save Settings now sends only a secret-free connection profile to storage while keeping service-principal `client_secret` in Streamlit session state for the current operator session.
+- Test Connection keeps existing session health behavior and records completed health results through storage when available; storage failures surface clear UI warnings/errors without blocking safe session-only use.
+- Validation: `python -m pytest -q`; `python -m ruff check app tests`; `python -m mypy app tests`.
+
+## 2026-05-06T06:44:31.579Z: PR #9 Storage Comparison Review
+
+**Finding:** Local implementation keeps hydration explicit and operator-visible; storage decoupled from connection_state. PR #9 hides hydration logic and swallows failures.
+
+**Rationale:**
+- Local pattern: `load_persisted_connection_state` / `persist_connection_profile` / `persist_health_run` in Streamlit pages (Settings, Welcome)
+- Hydration explicit in code; operator sees success/failure feedback
+- Storage unavailable → clear UI message, session-only fallback
+- PR #9 obscures hydration; error handling implicit
+
+**Recommendation:** STICK WITH LOCAL; close PR #9 as superseded.
