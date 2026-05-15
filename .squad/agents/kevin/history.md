@@ -138,3 +138,5 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - No app/ui code imports SQLAlchemy directly
 
 **Notes:** Satya/Scott/Judson/Charlie sign-off required before Kevin begins implementation. DATABASE_URL configuration precedence and secret redaction strategy locked. Future: Scott decides where client_secret lives in prod (Key Vault, env, OS keychain).
+
+- 2026-05-15T12:27:55.007+02:00: Ported PR #9's useful forget-connection idea as a storage-bridge API only. `app\storage\repositories\connection_profiles.py` already had delete/clear-active repository primitives, so the new bridge function delegates to the SQLAlchemy boundary, strips no new secrets, and leaves session auth cleanup to existing UI/session behavior.

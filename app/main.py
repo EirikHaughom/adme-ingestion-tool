@@ -22,6 +22,10 @@ from app.connection_state import (  # noqa: E402
     results_to_table_rows,
     summarize_health,
 )
+from app.storage_bridge import (  # noqa: E402
+    StorageSyncStatus,
+    load_persisted_connection_state,
+)
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Settings.py"
 
@@ -37,6 +41,11 @@ def main() -> None:
         "Connect an Azure Data Manager for Energy instance, validate core "
         "OSDU services, and keep operators on the shortest path to action."
     )
+    st.caption(
+        "Saved connection profiles and completed validation results load from "
+        "persistent storage when available. Microsoft sign-in and client secrets "
+        "remain tied to each Streamlit session."
+    )
     st.page_link(
         SETTINGS_PAGE_PATH,
         label="Open Settings",
@@ -44,12 +53,16 @@ def main() -> None:
     )
 
     ensure_session_defaults(st.session_state)
+    _render_storage_status(load_persisted_connection_state(st.session_state))
     connection = get_connection(st.session_state)
     overall_state = get_overall_state(st.session_state)
 
     st.subheader("Connection state")
     st.markdown(f"**Status:** {format_overall_state(overall_state)}")
-    st.caption("Need to change this session's connection? Open Settings.")
+    st.caption(
+        "Need to change this session's connection, restore a client secret, or "
+        "sign in again? Open Settings."
+    )
 
     if connection is None or overall_state == "not_configured":
         st.warning("No ADME connection is configured for this session.")
@@ -108,6 +121,18 @@ def main() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+
+def _render_storage_status(status: StorageSyncStatus) -> None:
+    """Show storage sync feedback without blocking session-only operation."""
+    if not status.message:
+        return
+    if status.severity == "error":
+        st.error(status.message)
+    elif status.severity == "warning":
+        st.warning(status.message)
+    elif status.severity == "info":
+        st.info(status.message)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,13 @@ from app.services.auth import (  # noqa: E402
     start_user_auth_flow,
 )
 from app.services.health import check_all  # noqa: E402
+from app.storage_bridge import (  # noqa: E402
+    StorageSyncStatus,
+    connection_profile_without_secret,
+    load_persisted_connection_state,
+    persist_connection_profile,
+    persist_health_run,
+)
 
 OAUTH_CALLBACK_PARAM_KEYS = {
     "client_info",
@@ -92,11 +99,13 @@ def main() -> None:
         "OSDU service before starting an operator workflow."
     )
     st.caption(
-        "Client secrets stay in Streamlit session state only and are cleared "
-        "when the session ends."
+        "Settings are saved persistently when storage is available. Client "
+        "secrets, pending sign-in, and tokens stay in Streamlit session state "
+        "only; user impersonation requires sign-in for each Streamlit session."
     )
 
     ensure_session_defaults(st.session_state)
+    _render_storage_status(load_persisted_connection_state(st.session_state))
     _consume_oauth_callback_once()
     st.markdown(
         f"**Current session state:** "
@@ -300,19 +309,22 @@ def _handle_form_action(
 
     connection_changed = existing_connection != connection
     save_connection(st.session_state, connection)
+    profile_for_storage = connection_profile_without_secret(connection)
+    profile_status = persist_connection_profile(profile_for_storage)
+    _render_storage_status(profile_status)
 
     if test_clicked:
         clear_health_state(st.session_state)
-        _run_connection_test(connection)
+        _run_connection_test(connection, profile_for_storage)
         return
 
     if connection_changed:
         clear_health_state(st.session_state)
-        st.success("Connection settings saved for this session.")
+        st.success(_settings_saved_message(profile_status))
         st.info(_validation_refresh_guidance(connection.auth_method))
         return
 
-    st.success("Connection settings are already up to date for this session.")
+    st.success(_settings_unchanged_message(profile_status))
 
 
 def _test_connection_disabled(
@@ -389,7 +401,10 @@ def _authorization_url_from_pending_flow(pending_flow: object) -> str | None:
     return None
 
 
-def _run_connection_test(connection: ADMEConnection) -> None:
+def _run_connection_test(
+    connection: ADMEConnection,
+    profile_for_storage: ADMEConnection | None = None,
+) -> None:
     """Authenticate and validate every configured OSDU service."""
     with st.spinner("Authenticating and checking ADME services..."):
         try:
@@ -406,6 +421,11 @@ def _run_connection_test(connection: ADMEConnection) -> None:
             return
 
     store_health_results(st.session_state, results)
+    health_status = persist_health_run(
+        profile_for_storage or connection_profile_without_secret(connection),
+        results,
+    )
+    _render_storage_status(health_status)
     _render_validation_summary(results)
 
 
@@ -472,6 +492,41 @@ def _validation_refresh_guidance(auth_method: AuthMethod) -> str:
     if auth_method == AuthMethod.USER_IMPERSONATION:
         return USER_IMPERSONATION_REFRESH_GUIDANCE
     return "Run Test Connection to refresh the service health report."
+
+
+def _settings_saved_message(status: StorageSyncStatus) -> str:
+    """Return confirmation copy for a changed connection profile."""
+    if status.available:
+        return (
+            "Connection settings saved persistently. Client secret remains "
+            "available only in this Streamlit session."
+        )
+    return (
+        "Connection settings saved for this Streamlit session. Persistent "
+        "storage was not updated."
+    )
+
+
+def _settings_unchanged_message(status: StorageSyncStatus) -> str:
+    """Return confirmation copy for an unchanged connection profile."""
+    if status.available:
+        return "Connection settings are already saved persistently."
+    return (
+        "Connection settings are already up to date for this Streamlit session. "
+        "Persistent storage was not updated."
+    )
+
+
+def _render_storage_status(status: StorageSyncStatus) -> None:
+    """Show storage sync feedback without blocking session-only operation."""
+    if not status.message:
+        return
+    if status.severity == "error":
+        st.error(status.message)
+    elif status.severity == "warning":
+        st.warning(status.message)
+    elif status.severity == "info":
+        st.info(status.message)
 
 
 def _with_retry_guidance(

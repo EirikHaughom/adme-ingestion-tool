@@ -94,3 +94,10 @@ Charlie (Tester) owns test strategy, acceptance criteria, and quality gates for 
 **PR #9 gaps:** Profile persistence only; missing PostgreSQL production validation, migration verification, health persistence and atomicity, and failure-mode testing.
 
 **Recommendation:** STICK WITH LOCAL; close PR #9 as superseded. All test gates passing (101 passed, 1 skipped).
+
+## 2026-05-15T12:27:55.007+02:00: PR #9 Test Hardening Port
+
+- Ported the useful PR #9 hardening pattern as a root autouse `DATABASE_URL` isolation fixture so tests default to a per-test SQLite database instead of any operator `.adme\adme.db` or home/user store.
+- Strengthened storage repository coverage with a raw SQLite file bytes assertion proving the rejected service-principal `client_secret` value is absent after a persistence attempt; kept the existing bridge-level raw bytes check for stripped session-only values.
+- Kept the local SQLAlchemy/Alembic storage boundary; did not port PR #9 sqlite3 settings store, ADME_SETTINGS_DB, keyring, or connection_state coupling.
+- Validation: focused storage tests passed; full pytest passed; touched-file Ruff and full mypy passed. Full repository Ruff remains blocked by pre-existing issues outside this change.

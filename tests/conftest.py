@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.models.connection import OSDU_SERVICES, ServiceHealthResult
 from tests.support.streamlit_recorder import StreamlitRecorder
+
+
+@pytest.fixture(autouse=True)
+def _isolate_storage_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Route default persistent storage to a per-test SQLite database."""
+    database_path = tmp_path / "adme-test.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
 
 
 @pytest.fixture
