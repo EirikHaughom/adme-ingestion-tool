@@ -75,6 +75,10 @@ class StreamlitRecorder(ModuleType):
         """Return a context manager for a Streamlit spinner."""
         return StreamlitContext(self, "spinner", (text,), kwargs)
 
+    def expander(self, label: str, **kwargs: Any) -> StreamlitContext:
+        """Return a context manager for a Streamlit expander."""
+        return StreamlitContext(self, "expander", (label,), kwargs)
+
     def text_input(self, label: str, value: str = "", **kwargs: Any) -> str:
         """Record a text input and return the configured widget value."""
         self.calls.append(

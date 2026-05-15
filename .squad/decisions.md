@@ -781,3 +781,617 @@ APPROVE.
 
 Ready for coordinator merge handling. No further implementation changes required.
 
+
+---
+
+### 2026-05-05: Local persistence for ADME connection settings (SQLite)
+**By:** Satya
+
+## Decision
+
+Persist user-entered ADME connection settings (the control plane) to a local
+SQLite database via the Python stdlib `sqlite3` module. SQLite becomes the
+durable backing store; Streamlit `st.session_state` remains the per-rerun
+working copy and continues to own all auth/session-only material.
+
+## Why SQLite (and not pglite)
+
+- pglite is JS/WASM (Postgres compiled for the browser). The Streamlit app
+  runs Python on the server side; pglite cannot be embedded in that process
+  and adds a Node.js/WASM dependency that we will not own.
+- SQLite via `sqlite3` is stdlib — zero new runtime dependencies, no install
+  step, works under our current emulation/test environment, and gives us a
+  single-file database that is trivially git-ignored and trivially deleted
+  for a clean reset.
+- File-based persistence matches operator expectations for a desktop-style
+  control plane: settings survive across sessions for the same OS user, and
+  there is no separate service to start.
+
+## Storage location
+
+- Path: `~/.adme-ingestion-tool/settings.db` resolved via
+  `Path.home() / ".adme-ingestion-tool" / "settings.db"`.
+- Created lazily on first write; directory created with `mkdir(parents=True,
+  exist_ok=True)`.
+- Overridable via environment variable `ADME_SETTINGS_DB` for tests and
+  alternate installs (tests MUST use `tmp_path`, never the real home dir).
+- Why user profile (not repo): the database is per-operator state, not
+  product code. Storing it in the repo would (a) leak operator-specific
+  endpoints/tenant IDs through git, (b) collide between developers sharing
+  the checkout, and (c) be wiped by routine `git clean`. The user-profile
+  location is the same convention used by `az`, `gh`, `kubectl`, etc.
+- `.gitignore`: not required (the path is outside the repo), but add the
+  override path (`*.db` under `.adme-ingestion-tool/`) defensively if any
+  test fixture writes inside the workspace.
+
+## Schema — `connections` table
+
+```sql
+CREATE TABLE IF NOT EXISTS connections (
+    name              TEXT PRIMARY KEY,
+    endpoint          TEXT NOT NULL,
+    tenant_id         TEXT NOT NULL,
+    client_id         TEXT NOT NULL,
+    data_partition_id TEXT NOT NULL,
+    token_scope       TEXT NOT NULL DEFAULT 'https://energy.azure.com/.default',
+    auth_method       TEXT NOT NULL CHECK (auth_method IN
+                          ('user_impersonation', 'service_principal')),
+    is_active         INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_active
+    ON connections(is_active) WHERE is_active = 1;
+```
+
+### Schema decisions
+
+- **Primary key is `name` (operator-supplied label), not the endpoint.** An
+  operator may register the same ADME endpoint under different labels
+  (e.g. `prod`, `prod-readonly`) with different auth methods. `name` is the
+  stable human handle.
+- **No `id` surrogate key.** `name` is short, stable, and already unique.
+  Adding an integer PK buys nothing for a single-user local store.
+- **`client_secret` is NOT persisted.** Secrets at rest are explicitly out
+  of scope (see below). Service-principal connections will require the
+  operator to re-enter the secret per session until encryption-at-rest is
+  added. The Settings UI must communicate this clearly.
+- **No `token_scope` UNIQUE.** Scope is config that may legitimately vary
+  per saved connection.
+- **`is_active` partial unique index** enforces "at most one active
+  connection at a time" without needing a separate `active_connection`
+  table. Activating a new row sets others to 0 in the same transaction.
+- **Timestamps as ISO 8601 TEXT** (`datetime.now(UTC).isoformat()`).
+  SQLite has no native datetime; TEXT is portable and human-readable.
+- Field names mirror `app/models/connection.py` (`ADMEConnection`) so the
+  store/load mapping is mechanical.
+
+## API surface — `app/services/settings_store.py`
+
+Function signatures only; bodies are Kevin's work.
+
+```python
+"""Local SQLite-backed store for persisted ADME connection settings."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.models.connection import ADMEConnection
+
+
+DEFAULT_DB_PATH: Path  # = Path.home() / ".adme-ingestion-tool" / "settings.db"
+
+
+class SettingsStoreError(Exception):
+    """Raised when the local settings store cannot be read or written."""
+
+
+def get_db_path() -> Path: ...
+    """Return the resolved SQLite path, honoring ADME_SETTINGS_DB."""
+
+
+def initialize_store(db_path: Path | None = None) -> None: ...
+    """Create the DB file and schema if missing. Idempotent."""
+
+
+def list_connections(db_path: Path | None = None) -> list[tuple[str, ADMEConnection]]: ...
+    """Return saved (name, connection) pairs, ordered by name."""
+
+
+def load_connection(name: str, db_path: Path | None = None) -> ADMEConnection | None: ...
+    """Return the saved connection for name, or None if missing."""
+
+
+def save_connection(
+    name: str,
+    connection: ADMEConnection,
+    db_path: Path | None = None,
+) -> None: ...
+    """Insert or update a saved connection by name. client_secret is not persisted."""
+
+
+def delete_connection(name: str, db_path: Path | None = None) -> None: ...
+    """Remove a saved connection by name. No error if missing."""
+
+
+def get_active_connection_name(db_path: Path | None = None) -> str | None: ...
+    """Return the currently active connection name, or None if none active."""
+
+
+def set_active_connection(name: str, db_path: Path | None = None) -> None: ...
+    """Mark name as active and clear the active flag on all other rows.
+
+    Raises SettingsStoreError if name does not exist.
+    """
+
+
+def clear_active_connection(db_path: Path | None = None) -> None: ...
+    """Clear the active flag on all rows. Used on Sign Out / reset."""
+```
+
+### API design notes
+
+- `db_path` is a thin seam for tests (override with `tmp_path`) and the
+  `ADME_SETTINGS_DB` env var. Defaults to `get_db_path()`.
+- All functions open and close a short-lived `sqlite3` connection. No
+  module-global cursor; no Streamlit caching. Concurrency is single-user.
+- `save_connection()` MUST drop `client_secret` before INSERT/UPDATE.
+  Document this in the docstring; assert it in tests.
+- `set_active_connection()` and `save_connection(... is_active=True)` paths
+  must run inside `BEGIN IMMEDIATE` to keep the partial unique index honest
+  on activation switches.
+- Errors from `sqlite3` are re-raised as `SettingsStoreError` with
+  operator-safe messages. No raw connection strings or tokens in messages.
+
+## UI integration touchpoints
+
+### `app/connection_state.py`
+
+- `ensure_session_defaults(session_state)` — call
+  `settings_store.initialize_store()` once and, when `CONNECTION_KEY` is
+  absent from session state, hydrate it via
+  `load_connection(get_active_connection_name())`. Keep all existing keys.
+- `save_connection(session_state, connection)` — after updating session
+  state, call `settings_store.save_connection(name, connection)` and
+  `settings_store.set_active_connection(name)`. The function gains an
+  optional `name` argument; for the v1 single-connection UX, default to
+  the literal `"default"` label so existing call sites do not break.
+- `clear_user_auth_state(session_state)` — unchanged. Auth material is
+  session-only and is NOT written to SQLite.
+- New helper `forget_saved_connection(session_state, name)` that wraps
+  `settings_store.delete_connection` plus any session cleanup.
+
+### `app/pages/1_⚙️_Settings.py`
+
+- `_handle_form_action(...)` — when `save_clicked` succeeds, the existing
+  call to `save_connection(st.session_state, draft_connection)` already
+  becomes the persistence path once `connection_state.save_connection`
+  delegates to the store. No new code in the page for the v1 single-slot
+  flow beyond the success message ("Saved for this and future sessions.").
+- `_consume_oauth_callback_once()` — unchanged. Auth flow is session-only.
+- (Deferred to a follow-up issue: a "Saved connections" picker that lists
+  rows from `list_connections()` and lets the operator switch active. For
+  this scope we ship single-slot persistence keyed on the `"default"`
+  name.)
+
+### `app/main.py`
+
+- No changes required. `ensure_session_defaults()` already runs at the top
+  of `main()`, so hydration happens transparently.
+
+## Out of scope (deferred — explicit non-goals)
+
+- **Encryption of secrets at rest.** `client_secret` is NOT persisted in
+  v1. Operators re-enter it per session for service-principal auth.
+  A future issue can add OS-keychain integration (`keyring`) or a
+  passphrase-derived key.
+- **Multi-user / shared deployment support.** This store is single-user,
+  single-host. Not safe for shared filesystems.
+- **Migrations framework.** v1 ships one schema. Future schema changes
+  will be handled by an additive migration helper when we get there;
+  do not pull in Alembic for a single-table store.
+- **Connection picker UI / multiple saved profiles.** The API supports it
+  (`list_connections`, `set_active_connection`); the UI ships single-slot.
+- **Cross-process locking.** SQLite handles this; we do not add app-level
+  locks.
+- **Telemetry / audit log of edits.** Not in scope.
+
+## Work breakdown
+
+### Kevin (Backend)
+
+1. Add `app/services/settings_store.py` with the API above. Implement the
+   bodies. No new runtime deps; stdlib `sqlite3` + `pathlib` only.
+2. Implement `DEFAULT_DB_PATH`, `get_db_path()` env-var override, and
+   schema initialization (`CREATE TABLE IF NOT EXISTS` + partial index).
+3. Implement save/load/delete/list with the documented client_secret-drop
+   guarantee. Use `BEGIN IMMEDIATE` for activation transitions.
+4. Wire `app/connection_state.py`:
+   - hydrate session from active row in `ensure_session_defaults`;
+   - delegate `save_connection` to the store and set active;
+   - keep auth helpers untouched.
+5. Smoke-test locally with `streamlit run app/main.py`: enter a
+   connection, restart the app, confirm it reloads.
+6. No README changes — Scott will pick that up after the store lands.
+
+### Charlie (Tester)
+
+1. Add `tests/test_settings_store.py`:
+   - happy-path round-trip (save → load → list → delete);
+   - `client_secret` is dropped on save (load returns empty string);
+   - `set_active_connection` flips active correctly; partial unique
+     index allows zero or one active row;
+   - `get_active_connection_name` returns None on empty DB and the right
+     name after activation;
+   - `ADME_SETTINGS_DB` env-var override is honored;
+   - schema is idempotent (`initialize_store` called twice is a no-op);
+   - missing-name `delete_connection` is a no-op (no exception);
+   - `set_active_connection` on unknown name raises
+     `SettingsStoreError`;
+   - all tests use `tmp_path`; none touch the real home directory.
+2. Extend `tests/test_connection_state.py`:
+   - `ensure_session_defaults` hydrates `CONNECTION_KEY` from a stubbed
+     active row;
+   - `save_connection` writes through to the store (mock or fake store);
+   - changing the connection still clears auth and health state.
+3. Extend `tests/test_settings_page.py` minimally:
+   - asserting the existing save flow still passes after persistence
+     wiring (no new UI assertions needed for v1).
+4. Validation gates: full `pytest`, `ruff check app tests`,
+   `mypy app tests` all green before requesting review.
+
+### Sequencing
+
+- Kevin lands `settings_store.py` (steps 1–3) first. Charlie can write
+  the store-only tests in parallel against the published signatures.
+- Kevin then wires `connection_state.py` (step 4). Charlie's session-
+  state and page tests follow.
+- Satya reviews before merge; any change to the public function
+  signatures above requires lead sign-off.
+
+---
+
+### 2026-05-05: Autouse fixture isolates ADME_SETTINGS_DB for every test
+**By:** Charlie (Tester), requested by Mariel
+**What:** Added `_isolate_settings_db` autouse fixture in `tests/conftest.py`
+that sets `ADME_SETTINGS_DB` to `tmp_path/settings.db` for every test in the
+suite. Test code never falls through to `Path.home() / ".adme-ingestion-tool"
+/ "settings.db"`.
+**Why:** Two tests (`test_main_prompts_operator_to_open_settings_when_not_configured`
+and `test_settings_page_defaults_token_scope_to_adme_resource_scope`) passed
+in isolation but failed under the full suite because
+`ensure_session_defaults` hydrated from the operator's real on-disk settings
+DB. Per-test opt-in isolation (the existing `isolated_store` fixture) is
+fragile — any new test that forgets to request it re-opens the leak. Autouse
+is the only durable fix.
+**Scope:** Test infrastructure only. No production behavior changes.
+`app/services/settings_store.py` was untouched and needs no reset hook
+because it holds no module-level state — every call opens a short-lived
+`sqlite3` connection via `closing()`.
+**Result:** Full suite green: 105 passed.
+
+
+---
+
+
+---
+
+
+
+
+### 2026-05-05: Entitlements smoke-test page architecture
+**By:** Satya (via Copilot)
+**Requested by:** Mariel
+
+## Decision
+
+Add a dedicated Streamlit page that exercises the ADME Entitlements API as
+the operator's "did I configure this correctly?" smoke test. This is a
+distinct surface from the OSDU service health probe — health asks "is the
+service up", entitlements asks "does my token actually work as me".
+
+The work is partitioned cleanly between Kevin (service module + result
+model), Judson (page + chart + UX), and Charlie (tests). Mariel's UX
+answers are binding and reproduced in the contract below.
+
+## File layout (confirmed)
+
+- **New service module:** `app/services/entitlements.py`
+- **New page:** `app/pages/2_🔑_Entitlements.py` (emoji prefix matches the
+  `1_⚙️_Settings.py` convention so Streamlit's auto-discovered page nav
+  stays consistent)
+- **Result model lives in:** `app/models/connection.py`, alongside
+  `ServiceHealthResult`
+- **New tests:** `tests/test_entitlements_service.py` and
+  `tests/test_entitlements_page.py`
+
+### Why `EntitlementsCallResult` lives in `app/models/connection.py`
+
+The `app/models/connection.py` docstring already describes itself as the
+"shared contract between the UI layer (Judson) and the backend services
+(Kevin)", and it already hosts `ServiceHealthResult` for the same
+service-result-shape reason. Splitting service result dataclasses into
+parallel files (`models/health.py`, `models/entitlements.py`, ...) would
+fragment that contract for no benefit at this size. Revisit if the
+connection module exceeds ~300 LOC or if entitlements grows its own data
+types beyond a result envelope.
+
+## Service contract — `app/services/entitlements.py`
+
+Mirrors `app/services/health.py`: stdlib + `requests`, ~5 s timeout, no
+retries inside the service (the UI's "Re-run test" button is the retry
+control). Both functions are independent — Judson may call them
+sequentially or concurrently; the service does not assume either order.
+
+```python
+PROBE_TIMEOUT_SECONDS = 5
+MEMBERS_SELF_PATH = "/api/entitlements/v2/members/{me}"  # literal {me} per ADME contract
+GROUPS_PATH = "/api/entitlements/v2/groups"
+
+def fetch_member_self(
+    connection: ADMEConnection,
+    token: str,
+) -> EntitlementsCallResult: ...
+
+def fetch_groups(
+    connection: ADMEConnection,
+    token: str,
+) -> EntitlementsCallResult: ...
+```
+
+Both functions:
+
+- Validate `connection.is_valid()` and that `token` is non-empty (raise
+  `ValueError` on misuse, matching `health.check_all`).
+- Build `Authorization: Bearer {token}` and
+  `data-partition-id: {connection.data_partition_id}` headers.
+- Use `requests.get(...)` with `timeout=PROBE_TIMEOUT_SECONDS` and
+  `allow_redirects=False`.
+- Time the call with `time.perf_counter()` and report `latency_ms` rounded
+  to 2 decimals (same idiom as `health._elapsed_ms`).
+- Treat `200 <= status < 300` as success; on success, parse the JSON body
+  into `data`. On non-2xx, build a friendly message using the same
+  shape-tolerant pattern as `health._build_http_error_message` and store
+  the raw body in `raw_response`.
+- On `requests.Timeout` and `requests.RequestException`, return
+  `ok=False`, `http_status=None`, an `error_message` from the exception,
+  `correlation_id=None`, and `raw_response=None`.
+- Catch only `requests.RequestException` and `ValueError` (JSON parse) at
+  the boundary. Do not silence broader exceptions.
+
+### `EntitlementsCallResult` shape
+
+```python
+@dataclass
+class EntitlementsCallResult:
+    """Outcome of a single ADME Entitlements API call."""
+
+    endpoint: str            # logical label, e.g. "members/{me}" or "groups"
+    path: str                # API path actually called
+    ok: bool
+    http_status: int | None
+    latency_ms: float
+    correlation_id: str | None
+    error_message: str       # "" on success, friendly message on failure
+    raw_response: dict | str | None  # parsed JSON if available, else raw text, else None
+    data: dict | None        # parsed payload only when ok is True
+```
+
+Conventions match `ServiceHealthResult`: `error_message` defaults to
+empty string (not None) on success; `latency_ms` is always populated
+(never None) so the in-session chart never has to handle holes.
+
+### Correlation ID extraction
+
+ADME Entitlements returns the correlation identifier on the response
+header. The service performs a **case-insensitive lookup** because
+`requests.Response.headers` is a `CaseInsensitiveDict` but operators may
+configure proxies that re-emit headers in different casing. Probe in
+order and take the first hit:
+
+1. `correlation-id`
+2. `x-correlation-id`
+3. `request-id`
+4. `x-request-id`
+
+If none are present, `correlation_id` is `None`. Surface whichever value
+is found verbatim — do not normalize, lowercase, or wrap.
+
+## Page contract — `app/pages/2_🔑_Entitlements.py`
+
+UX (binding from Mariel):
+
+- **Auto-run-once on load if a token exists.** Use a session-state guard
+  (`st.session_state["entitlements_autorun_done"]`) so that a Streamlit
+  rerun does not re-fire the calls. The "Re-run test" button explicitly
+  bypasses the guard and calls both endpoints again.
+- **Both endpoints called per run.** `fetch_member_self` first (so the
+  "who am I" banner renders even if the groups call fails), then
+  `fetch_groups`.
+- **Status banner:** ✅ green when both calls return `ok=True`; ❌ red
+  otherwise. Failure banner shows: friendly message, HTTP status,
+  correlation/request ID (if any), and an expander with `raw_response`.
+- **Groups display:** primary view is a `st.dataframe` table built from
+  `data["groups"]` (typical ADME shape: list of `{name, description,
+  email}` objects). Tolerate a missing `groups` key by showing an empty
+  table plus an info caption.
+- **Raw JSON expander:** one expander per endpoint, rendered with
+  `st.json(result.raw_response or result.data)`.
+- **No data-partition override.** Use `connection.data_partition_id`
+  from the saved connection. There is no per-page override field. The
+  page renders the partition value as a read-only caption so operators
+  can see what was used.
+- **No token re-prompt.** If `get_user_auth_state()` is None (user
+  impersonation) AND the connection is not service-principal, render a
+  friendly banner "No token available — configure on the Settings page"
+  with a `st.page_link` to `pages/1_⚙️_Settings.py`. Do **not** call
+  `start_user_auth_flow` from this page.
+- **Token acquisition:** for service-principal connections, call
+  `get_token(connection)`. For user impersonation, call
+  `get_token(connection, user_auth_state=...)` using the existing session
+  state helper. Wrap in `try/except AuthenticationError` and degrade to
+  the friendly "configure on Settings" banner with the auth error
+  message attached.
+
+### Latency / retry chart — in-session history
+
+History is a Streamlit-session-scoped list of dict entries (chosen over
+tuples so future fields don't require a positional rewrite). It is
+**append-only within a session** and is cleared whenever the connection,
+auth method, or token scope changes — Judson should reuse the existing
+`clear_*` hooks in `connection_state` and add a peer
+`clear_entitlements_history` invoked from the same code paths that
+already clear health state.
+
+```python
+st.session_state["entitlements_history"]: list[dict] = [
+    {
+        "timestamp": "2026-05-05T10:30:00Z",  # ISO 8601 UTC
+        "endpoint": "members/{me}" | "groups",
+        "latency_ms": float,
+        "http_status": int | None,
+        "ok": bool,
+    },
+    ...
+]
+```
+
+Render with `st.line_chart` keyed on `timestamp` with `latency_ms` as
+the value column, grouped by `endpoint`. `altair` is acceptable if
+Judson wants per-endpoint coloring without reshaping; we already pull
+in only Streamlit's bundled deps so prefer `st.line_chart` first. Below
+the chart, a small `st.dataframe` shows the last ~10 entries with
+status badge, latency, and correlation ID for quick diagnosis.
+
+### Auth integration
+
+- Read connection via `get_connection(st.session_state)`.
+- Read token (if any) via the same helpers `1_⚙️_Settings.py` already
+  uses. The page does **not** import `start_user_auth_flow` or
+  `complete_user_auth_flow`. Settings remains the only owner of the OAuth
+  callback dance (per the issue #8 decision).
+
+## Out of scope (explicit)
+
+The following are deferred and must not creep into this page or
+service in v1:
+
+- Pagination of groups beyond the API's default page (no `cursor`,
+  `limit`, "load more" UI).
+- Group filtering UI (search box, role-based filter, regex).
+- Group membership management (add/remove members, delete groups,
+  rename groups). This page is **read-only**.
+- Caching of entitlements results across reruns. Each run hits the API
+  fresh; the in-session chart is the only persisted artifact.
+- Cross-tenant impersonation or alternate `data-partition-id` overrides.
+
+## Work breakdown
+
+- **Kevin** — `app/services/entitlements.py` (both functions, the
+  shape-tolerant error message helper mirroring `health._build_http_error_message`,
+  correlation-ID extraction) and the `EntitlementsCallResult` dataclass
+  added to `app/models/connection.py`. Update the module docstring to
+  mention entitlements as a co-tenant of the contract. Keep the public
+  surface to the two `fetch_*` functions plus the dataclass.
+
+- **Judson** — `app/pages/2_🔑_Entitlements.py` end-to-end: auto-run-once
+  guard, "Re-run test" button, status banner, both raw-JSON expanders,
+  groups dataframe, latency line chart, last-N history table, the
+  no-token friendly banner, and `clear_entitlements_history` wiring into
+  the existing connection/auth-change handlers in `connection_state`.
+
+- **Charlie** — service tests against mocked `requests` responses
+  covering: 2xx success on both endpoints, non-2xx with JSON error body,
+  non-2xx with text body, timeout, network error, correlation-ID
+  extraction across all four header casings, and missing-correlation
+  fallback. Page smoke test using the existing `tests/support/streamlit_recorder.py`
+  pattern: renders the no-token banner when token is absent, renders the
+  status banner and history append on a successful mocked run, and does
+  not double-fire the auto-run on a Streamlit rerun.
+
+## Sequencing
+
+- Kevin lands `entitlements.py` and the `EntitlementsCallResult`
+  addition first so the public signatures are frozen. Judson can scaffold
+  the page in parallel against those signatures but must not merge
+  before Kevin's contract is in.
+- Charlie's service tests can land alongside Kevin. Page tests follow
+  Judson.
+- No Scott work this round; no infra, no new dependencies. All required
+  packages (`requests`, `streamlit`) are already declared.
+
+## Acceptance criteria
+
+- `app/services/entitlements.py` exposes `fetch_member_self` and
+  `fetch_groups` matching the signatures above.
+- `EntitlementsCallResult` exists in `app/models/connection.py` with the
+  documented fields and defaults.
+- `app/pages/2_🔑_Entitlements.py` auto-runs once when a token exists,
+  re-runs on demand, never auto-runs twice across reruns, and never
+  re-prompts for sign-in.
+- Correlation ID is extracted case-insensitively from the four header
+  names listed above.
+- In-session history is cleared when the connection, auth method, or
+  token scope changes, using the same hook points as health state.
+- Pagination, filtering, and membership management are absent from both
+  the service and the page.
+- Targeted tests pass: `tests/test_entitlements_service.py` and
+  `tests/test_entitlements_page.py`. Full suite stays green. Ruff and
+  mypy stay clean.
+
+---
+
+### 2026-05-05: Entitlements service contract diverges from Satya's spec
+**By:** Judson
+**Requested by:** Mariel
+
+## What
+
+While building `app/pages/2_🔑_Entitlements.py` against Kevin's
+`app/services/entitlements.py`, I noticed two small divergences from the
+contract Satya wrote in `satya-entitlements-page.md`. Per Mariel's task
+direction ("do NOT modify Kevin's service... proceed using his contract"),
+I built the page against Kevin's actual surface and am logging the deltas
+here so Satya/Charlie can rule on them after the fact.
+
+## Divergences
+
+1. **`MEMBERS_SELF_PATH`** — Satya: `"/api/entitlements/v2/members/{me}"`
+   (literal `{me}`). Kevin: `"/api/entitlements/v2/members/me"` (literal
+   `me`). Kevin's path matches the actual ADME entitlements REST contract
+   in production; the OSDU spec uses `me` as a literal segment, not a
+   parameter placeholder. Kevin's choice is correct; Satya's note read
+   the OSDU OpenAPI definition too literally.
+
+2. **Endpoint label** — Satya: `"members/{me}"`. Kevin:
+   `"members.self"`. The `.self` form is friendlier for chart legends
+   (no curly braces, easy to read) and avoids ambiguity if/when ADME
+   adds a true `/members/{id}` endpoint. The page uses Kevin's labels
+   verbatim in the latency chart.
+
+3. **`error_message` on success** — Satya's `EntitlementsCallResult`
+   sketch had `error_message: str` with `""` default; Kevin's
+   implementation uses `error_message: str | None = None`. The page
+   handles both: it treats falsy values (None or empty string) as "no
+   error" and only renders the error block when `error_message` is a
+   non-empty string.
+
+## Why this is fine
+
+None of these change the public behavior the page depends on. The page
+calls `fetch_member_self` and `fetch_groups`, reads `result.ok`,
+`result.http_status`, `result.latency_ms`, `result.correlation_id`,
+`result.error_message`, `result.raw_response`, and `result.data`. All
+of those work identically under both readings.
+
+## Action requested
+
+- Satya: confirm Kevin's path/label choices and update the inbox spec
+  in a future revision if needed (no merge blocker).
+- Charlie: tests should assert against Kevin's actual constants
+  (`MEMBERS_SELF_PATH = "/api/entitlements/v2/members/me"`,
+  `MEMBERS_SELF_ENDPOINT_LABEL = "members.self"`), not Satya's sketch.
+- No code change needed in `app/services/entitlements.py` or
+  `app/pages/2_🔑_Entitlements.py`.

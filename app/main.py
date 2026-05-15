@@ -28,6 +28,7 @@ from app.storage_bridge import (  # noqa: E402
 )
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Settings.py"
+ENTITLEMENTS_PAGE_PATH = "pages/2_🔑_Entitlements.py"
 
 
 def main() -> None:
@@ -43,13 +44,19 @@ def main() -> None:
     )
     st.caption(
         "Saved connection profiles and completed validation results load from "
-        "persistent storage when available. Microsoft sign-in and client secrets "
-        "remain tied to each Streamlit session."
+        "persistent storage when available. Service-principal secrets are "
+        "stored in the OS credential store; Microsoft sign-in remains tied to "
+        "each Streamlit session."
     )
     st.page_link(
         SETTINGS_PAGE_PATH,
         label="Open Settings",
         icon="⚙️",
+    )
+    st.page_link(
+        ENTITLEMENTS_PAGE_PATH,
+        label="Open Entitlements smoke test",
+        icon="🔑",
     )
 
     ensure_session_defaults(st.session_state)

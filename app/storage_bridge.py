@@ -92,12 +92,13 @@ def load_persisted_connection_state(session_state: Any) -> StorageSyncStatus:
 
         loaded_message = (
             "Loaded saved connection settings and latest validation from "
-            "persistent storage. Client secrets and user sign-in still belong "
-            "to this Streamlit session."
+            "persistent storage. Service-principal secrets load from the OS "
+            "credential store; user sign-in still belongs to this Streamlit "
+            "session."
             if loaded_results
             else "Loaded saved connection settings from persistent storage. "
-            "Client secrets and user sign-in still belong to this Streamlit "
-            "session."
+            "Service-principal secrets load from the OS credential store; "
+            "user sign-in still belongs to this Streamlit session."
         )
         return StorageSyncStatus(
             available=True,

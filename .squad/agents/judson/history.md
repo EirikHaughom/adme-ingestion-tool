@@ -81,6 +81,51 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+### 2026-05-05T09:55:00Z - Cross-agent: settings persistence available
+**From Scribe (team update):** Kevin shipped `app/services/settings_store.py`
+backed by stdlib SQLite at `~/.adme-ingestion-tool/settings.db` (override:
+`ADME_SETTINGS_DB`). `app.connection_state.ensure_session_defaults()` now
+hydrates from the active stored row, and `save_connection()` writes through
++ marks active. New helper: `forget_saved_connection()`.
+
+For the Settings page: the existing save flow already persists once
+`save_connection` delegation is in place — no new page-level wiring needed
+for the v1 single-slot UX. `client_secret` is intentionally NOT persisted;
+service-principal operators re-enter it per session. Auth material remains
+session-only and must NOT be written through this store.
+
+If/when a "Saved connections" picker is added, the store API already
+exposes `list_connections()` and `set_active_connection(name)` — no schema
+change required.
+
+## 2026-05-05 Entitlements page implementation (Mariel)
+- Built `app/pages/2_🔑_Entitlements.py` against Kevin's actual `app/services/entitlements.py` contract (members.self label + literal /me path), not Satya's earlier sketch. Logged the divergence to `.squad/decisions/inbox/judson-entitlements-mismatch.md` per Mariel's instruction.
+- Page session keys (page-scoped, no connection_state changes): `entitlements_history` (append-only list of dicts), `entitlements_autorun_done` (bool guard), `entitlements_last_member` and `entitlements_last_groups` (last EntitlementsCallResult so reruns triggered by clear-history don't blank the cards).
+- Auto-run-once: `should_run = rerun_clicked or not session_state[AUTORUN_KEY]`. Re-run button bypasses the guard; we set the guard True after the first successful run so subsequent Streamlit reruns (e.g., clear-history button click) do NOT re-fire calls. Re-run does NOT clear history — it appends two more entries (one per endpoint).
+- Pre-flight guard: render st.info + st.page_link to Settings when the connection is missing/invalid, OR when auth_method=USER_IMPERSONATION and no user_auth_state is present. Service-principal connections proceed straight to `get_token(connection)`.
+- Token acquisition mirrors Settings page's `_get_token_for_connection` exactly. AuthenticationError and bare Exception both degrade to a friendly error + Settings link; no raw library errors leak.
+- Latency chart uses `df.pivot_table(index=timestamp, columns=endpoint, values=latency_ms, aggfunc='last')` so st.line_chart renders one colored line per endpoint without manually reshaping. History table is reversed (newest first), capped at 20 rows, with latency formatted to 1 decimal.
+- Groups table is defensive: extracts `data["groups"]` only when it's a list of dicts; projects each group to (name, email, description) with `""` fallback for missing fields. Empty groups list shows a caption, not an error.
+- Identity label probes `email`, `desId`, `memberEmail`, `name`, `userPrincipalName` in order — ADME's `/members/me` typically returns `desId` not `email`.
+- Error block renders message + status (or 'no HTTP response') + correlation ID (or 'no correlation ID') + expander with raw_response (st.code for text bodies, st.json for dicts). Treats both `error_message=None` and `error_message=""` as success-path defensively.
+- Clear-history button ALSO clears `entitlements_last_member` and `entitlements_last_groups` so the cards reset to 'Run the entitlements test to see results.' caption — keeps page state coherent.
+- Updated `app/main.py` with a second st.page_link for the new Entitlements page (icon='🔑').
+- Added `"app/pages/2_🔑_Entitlements.py" = ["N999"]` to ruff per-file-ignores in pyproject.toml (matches the existing Settings exemption — Streamlit page filenames intentionally include emoji and digit prefixes).
+- pandas import needed `# type: ignore[import-untyped]` (no pandas-stubs installed; matches the requests pattern). ruff and mypy both clean.
+- Did NOT touch tests (Charlie owns), did NOT modify Kevin's service, did NOT modify connection_state.py (Mariel's spec is page-scoped state only — Satya's wiring of clear_entitlements_history into connection_state hooks is deferred since Mariel's binding UX rules don't require it).
+
+## 2026-05-06 Entitlements 405 fix - page rewire (Mariel)
+- Imports: dropped `fetch_member_self`; added `fetch_my_groups` and `app.services.token_utils.extract_object_id`. No changes to Kevin's modules.
+- Session keys renamed for clarity: `LAST_MEMBER_KEY` -> `LAST_MY_GROUPS_KEY` (`entitlements_last_my_groups`). The my-groups response is now BOTH the identity source and the primary groups source — single result, two cards.
+- Pre-flight chain unchanged at top (no connection / no token-for-user-auth banners stay as-is). NEW pre-flight is post-token: after `_acquire_token` succeeds, call `extract_object_id(token)`; if None, render `st.error` ("Could not read your Object ID from the access token. Sign out and sign back in on the Settings page.") + Settings page_link, set the autorun guard True so we don't loop, and skip both HTTP calls. No history append for this branch — keeps the chart clean for operators who just need to re-sign in.
+- `_run_entitlements_calls` now takes `object_id` and calls `fetch_my_groups(connection, token, object_id)` first, then `fetch_groups(connection, token)`. Both append to history, so the operator still gets 2 entries per run.
+- Identity card derives `desId` and `memberEmail` directly from the my-groups response `data` dict (per Satya's call: the my-groups response carries identity in the same payload — no second HTTP call). Display: `st.success("Authenticated as desId={x}, member email = {y}")` with '(unknown)' fallback per field, plus "Raw identity response (full payload)" expander showing `raw_response`. Removed the old `_identity_label` helper (probed email/desId/memberEmail/name/userPrincipalName) — no longer needed since we render desId and memberEmail explicitly.
+- My-groups primary card: header `f"🔐 Groups you belong to ({N})"`. Empty list shows the friendly admin-prompt note "You're not a member of any groups in this partition yet — ask an admin to add you." (st.info, not st.caption — operator action signal).
+- Identity + my-groups share a single `EntitlementsCallResult`, so `_render_my_groups_card` early-returns when `result.ok` is False — avoids double-rendering the error block (identity card already shows it).
+- All-groups demoted to secondary: wrapped in `st.expander("📚 All groups in this partition (admin view)", expanded=False)`. Same dataframe + raw-expander + error block patterns as before, just collapsed. `fetch_groups` is still called from the runner (not lazily on expander open) so latency history stays consistent.
+- Chart legend: latency-chart pivot now keys on a derived `display_endpoint` column built via `frame["endpoint"].str.replace(r"^members\..*\.groups$", "my groups", regex=True)`. The history table still shows the raw endpoint (members.{oid}.groups) so operators retain the OID for diagnostics / correlation-id matching. Pattern is regex anchored end-to-end so it doesn't accidentally collapse a future `members.something.else` shape.
+- Clear-history button now resets `LAST_MY_GROUPS_KEY` + `LAST_GROUPS_KEY`; old `LAST_MEMBER_KEY` references all gone.
+- ruff + mypy clean. Did NOT touch tests (Charlie owns), did NOT touch services, did NOT touch connection_state.
 ## 2026-05-05T20:00:00.287+02:00 Storage UI Persistence Wiring
 - Added Streamlit startup hydration through `app.storage_bridge` so Welcome and Settings can load the active saved profile plus latest validation without storing auth material in session persistence.
 - Save Settings now sends only a secret-free connection profile to storage while keeping service-principal `client_secret` in Streamlit session state for the current operator session.

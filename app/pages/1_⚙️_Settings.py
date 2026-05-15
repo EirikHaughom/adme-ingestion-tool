@@ -39,6 +39,7 @@ from app.models.connection import (  # noqa: E402
     AuthMethod,
     ServiceHealthResult,
 )
+from app.services import settings_store  # noqa: E402
 from app.services.auth import (  # noqa: E402
     AuthenticationError,
     complete_user_auth_flow,
@@ -99,9 +100,10 @@ def main() -> None:
         "OSDU service before starting an operator workflow."
     )
     st.caption(
-        "Settings are saved persistently when storage is available. Client "
-        "secrets, pending sign-in, and tokens stay in Streamlit session state "
-        "only; user impersonation requires sign-in for each Streamlit session."
+        "Settings are saved persistently when storage is available. "
+        "Service-principal client secrets are stored in your OS credential "
+        "store; pending sign-in and access tokens stay in Streamlit session "
+        "state. User impersonation requires sign-in for each Streamlit session."
     )
 
     ensure_session_defaults(st.session_state)
@@ -264,7 +266,10 @@ def _render_connection_form(existing_connection: ADMEConnection | None) -> None:
                 ),
                 type="password",
             )
-            st.caption("Client secret is masked and stored only for this session.")
+            st.caption(
+                "Client secret is masked and saved in your OS credential store "
+                "(never in the settings database)."
+            )
         else:
             st.info(USER_IMPERSONATION_GUIDANCE)
 
@@ -308,7 +313,11 @@ def _handle_form_action(
         return
 
     connection_changed = existing_connection != connection
-    save_connection(st.session_state, connection)
+    try:
+        save_connection(st.session_state, connection)
+    except settings_store.SettingsStoreError as exc:
+        st.error(f"Connection settings could not be saved: {exc}")
+        return
     profile_for_storage = connection_profile_without_secret(connection)
     profile_status = persist_connection_profile(profile_for_storage)
     _render_storage_status(profile_status)
@@ -498,8 +507,8 @@ def _settings_saved_message(status: StorageSyncStatus) -> str:
     """Return confirmation copy for a changed connection profile."""
     if status.available:
         return (
-            "Connection settings saved persistently. Client secret remains "
-            "available only in this Streamlit session."
+            "Connection settings saved persistently. Service-principal client "
+            "secret is saved in your OS credential store."
         )
     return (
         "Connection settings saved for this Streamlit session. Persistent "

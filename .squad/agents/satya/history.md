@@ -109,6 +109,23 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+## 2026-05-05 Entitlements page architecture (Mariel)
+- New page app/pages/2_🔑_Entitlements.py exercises ADME Entitlements API as operator smoke test (distinct from health probe).
+- New service app/services/entitlements.py with fetch_member_self + fetch_groups; mirrors health.py (stdlib + requests, 5s timeout, no internal retries).
+- EntitlementsCallResult dataclass lives in app/models/connection.py alongside ServiceHealthResult — keep shared UI/backend contract co-located.
+- Result envelope: ok, http_status, latency_ms, correlation_id, error_message, raw_response, data, plus endpoint/path labels.
+- Correlation ID: case-insensitive header lookup across correlation-id, x-correlation-id, request-id, x-request-id.
+- In-session history at st.session_state['entitlements_history'] as list of dicts (timestamp, endpoint, latency_ms, http_status, ok); cleared on connection/auth/scope change via same hooks as health state.
+- Auto-run-once guard prevents Streamlit-rerun re-fire; explicit Re-run button bypasses guard. No token re-prompt on this page; no per-page partition override.
+- Out of scope v1: groups pagination, filtering UI, membership management, cross-rerun caching.
+- Handoff: Kevin (service + model), Judson (page + chart + history wiring), Charlie (mocked-HTTP service tests + page smoke test). No Scott work, no new deps.
+
+## 2026-05-06 Entitlements 405 fix (Mariel)
+- Root cause: `/api/entitlements/v2/members/me` does not exist in ADME — returns 405. Real per-user endpoint is `/api/entitlements/v2/members/{object-id}/groups?type=none`, keyed on Entra OID, and returns desId/memberEmail/groups in one payload.
+- Decision: extract OID from JWT `oid` claim via stdlib base64url + json in new `app/services/token_utils.py` (no signature check — we just got the token from MSAL); add `fetch_my_groups(connection, token, object_id)`; delete `fetch_member_self` + `MEMBERS_SELF_*` constants entirely.
+- Page: identity card derived from my-groups response (memberEmail + desId/OID); my-groups primary card; all-groups demoted to secondary expander; pre-flight guard renders friendly error and skips HTTP when OID missing.
+- History label for the per-user call is the literal string `members.{oid}.groups` — keeps chart axes/session history free of per-user OIDs.
+- Handoff: Kevin (service + token_utils), Judson (page rewire), Charlie (delete member-self tests, add token_utils + my-groups tests, update page tests). No Scott, no new deps.
 - 2026-05-05T19:48:42.932+02:00: Storage architecture plan — chose SQLite (via SQLAlchemy 2.x + Alembic) as dev default; production uses operator-supplied PostgreSQL through a single `DATABASE_URL` env var. Rejected PGlite because it is JS/WASM only and has no Python embedding story; SQLite gives the same single-file/zero-install outcome with stdlib driver support.
 - 2026-05-05T19:48:42.932+02:00: Storage scope kept deliberately narrow for Phase 1: connection_profile + health_run_summary only. Secrets (client_secret, MSAL tokens) are forbidden in the DB and Charlie gates that boundary. `ADMEConnection` stays a dataclass; repositories return domain dataclasses, not ORM objects, so existing contracts in `app/connection_state.py` and `app/models/connection.py` are unaffected.
 - 2026-05-05T19:48:42.932+02:00: ORM portability rule: dialect-portable column types only (no `JSONB`, no `ARRAY`, no Postgres-only server defaults). Alembic auto-upgrade is allowed on SQLite startup but Postgres operators must run migrations explicitly. Phase ordering is Kevin (storage layer + repos) -> Judson (Settings/Welcome wiring) -> Scott (prod deploy + secret-store decision) -> Charlie (matrix tests).

@@ -2,12 +2,76 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
 
 from app.models.connection import OSDU_SERVICES, ServiceHealthResult
 from tests.support.streamlit_recorder import StreamlitRecorder
+
+
+@pytest.fixture(autouse=True)
+def _isolate_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
+    """Replace the ``keyring`` module with an in-memory fake for ALL tests.
+
+    ``app.services.settings_store`` lazily imports ``keyring`` inside its
+    secret helpers.  Without this fixture, any test that calls
+    ``save_connection``/``delete_connection`` would touch the real Windows
+    Credential Manager (or Linux/macOS equivalent).  We replace the module
+    in ``sys.modules`` so the lazy ``import keyring`` resolves to a stub
+    whose state is per-test (a fresh dict).  Tests that need to assert on
+    keyring calls install their own fake on top of this one.
+    """
+    store: dict[tuple[str, str], str] = {}
+
+    fake = types.ModuleType("keyring")
+    errors = types.ModuleType("keyring.errors")
+
+    class PasswordDeleteError(Exception):
+        pass
+
+    errors.PasswordDeleteError = PasswordDeleteError  # type: ignore[attr-defined]
+
+    def set_password(service: str, name: str, secret: str) -> None:
+        store[(service, name)] = secret
+
+    def get_password(service: str, name: str) -> str | None:
+        return store.get((service, name))
+
+    def delete_password(service: str, name: str) -> None:
+        try:
+            del store[(service, name)]
+        except KeyError as exc:
+            raise PasswordDeleteError("no such password") from exc
+
+    fake.set_password = set_password  # type: ignore[attr-defined]
+    fake.get_password = get_password  # type: ignore[attr-defined]
+    fake.delete_password = delete_password  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+    monkeypatch.setitem(sys.modules, "keyring.errors", errors)
+    return store
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the settings store at a per-test SQLite path.
+
+    Without this fixture, ``app.connection_state.ensure_session_defaults``
+    hydrates from the operator's real ``~/.adme-ingestion-tool/settings.db``
+    during any test that doesn't explicitly set ``ADME_SETTINGS_DB``.  That
+    cross-contaminates tests which assume a clean "no configuration yet"
+    starting state (notably the main page and Settings page tests).  By
+    making isolation autouse, hydration NEVER touches the user's real
+    profile during testing.
+    """
+    target = tmp_path / "settings.db"
+    monkeypatch.setenv("ADME_SETTINGS_DB", str(target))
+    return target
 
 
 @pytest.fixture(autouse=True)

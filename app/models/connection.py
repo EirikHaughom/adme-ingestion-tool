@@ -1,8 +1,10 @@
-"""ADME connection configuration and health-check result models.
+"""ADME connection, health-check, and entitlements result models.
 
 These dataclasses are the shared contract between the UI layer (Judson)
-and the backend services (Kevin).  Do not change field names or types
-without updating both sides.
+and the backend services (Kevin).  Health probes and entitlements smoke
+tests both surface their results through dataclasses defined here so the
+UI layer has a single import site for the contract.  Do not change field
+names or types without updating both sides.
 """
 
 from __future__ import annotations
@@ -80,6 +82,40 @@ class ServiceHealthResult:
     status_code: int | None = None
     response_time_ms: float | None = None
     error_message: str = ""
+
+
+@dataclass(frozen=True)
+class EntitlementsCallResult:
+    """Outcome of a single ADME Entitlements API call.
+
+    Attributes:
+        endpoint: Logical label for the call site (e.g. ``members.self``
+            or ``groups``).  Used for UI labelling and in-session history.
+        path: API path that was actually called.
+        ok: True when the HTTP response was 2xx and the body parsed.
+        http_status: HTTP status code returned, or None on transport
+            failure (timeout, network error).
+        latency_ms: Round-trip time in milliseconds.  Always populated
+            so in-session charts never have to handle holes.
+        correlation_id: Server-supplied correlation identifier extracted
+            from response headers, or None when no recognised header was
+            present.
+        error_message: Friendly error description when *ok* is False;
+            None on success.
+        raw_response: Parsed JSON body when available, otherwise the
+            response text, otherwise None (transport failure).
+        data: Parsed JSON payload — populated only when *ok* is True.
+    """
+
+    endpoint: str
+    path: str
+    ok: bool
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+    data: dict | None = None
 
 
 # Canonical list of OSDU services and their lightweight probe endpoints.

@@ -22,6 +22,7 @@ from app.models.connection import (
     AuthMethod,
     ServiceHealthResult,
 )
+from app.services import settings_store
 from app.services.auth import AuthenticationError, UserAuthFlowStart, UserAuthState
 from app.storage_bridge import StorageSyncStatus
 from tests.support.streamlit_recorder import StreamlitRecorder
@@ -112,6 +113,9 @@ def test_settings_page_renders_client_secret_for_service_principal(
     ]
     assert client_secret_calls
     assert client_secret_calls[0].kwargs["type"] == "password"
+    captions = [call.args[0] for call in streamlit_recorder.calls_named("caption")]
+    assert any("OS credential store" in message for message in captions)
+    assert all("stored only for this session" not in message for message in captions)
 
 
 def test_settings_page_hides_client_secret_for_user_impersonation(
@@ -368,11 +372,45 @@ def test_settings_page_save_persists_non_secret_profile(
     assert any(
         call.args
         == (
-            "Connection settings saved persistently. Client secret remains "
-            "available only in this Streamlit session.",
+            "Connection settings saved persistently. Service-principal client "
+            "secret is saved in your OS credential store.",
         )
         for call in streamlit_recorder.calls_named("success")
     )
+
+
+def test_settings_page_surfaces_persistence_error_and_skips_validation(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.widget_values.update(
+        {
+            "ADME endpoint": "https://example.energy.azure.com",
+            "Tenant ID": "11111111-1111-1111-1111-111111111111",
+            "Client ID": "22222222-2222-2222-2222-222222222222",
+            "Data partition ID": "example-opendes",
+            "Authentication method": AuthMethod.SERVICE_PRINCIPAL,
+            "Client secret": "super-secret",
+        }
+    )
+    streamlit_recorder.submit_responses["Test Connection"] = True
+    settings_module = _load_settings_module(streamlit_recorder, monkeypatch)
+
+    def fail_save(*_args: object, **_kwargs: object) -> None:
+        raise settings_store.SettingsStoreError("keyring locked")
+
+    def fail_get_token(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("validation should not run after save failure")
+
+    monkeypatch.setattr(settings_module, "save_connection", fail_save)
+    monkeypatch.setattr(settings_module, "get_token", fail_get_token)
+
+    settings_module.main()
+
+    error_messages = [call.args[0] for call in streamlit_recorder.calls_named("error")]
+    assert "Connection settings could not be saved: keyring locked" in error_messages
+    assert streamlit_recorder.session_state[CONNECTION_KEY] is None
+    assert streamlit_recorder.session_state[HEALTH_RESULTS_KEY] == []
 
 
 def test_settings_page_allows_blank_token_scope_for_backend_fallback(

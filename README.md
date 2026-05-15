@@ -114,9 +114,10 @@ Database passwords and credentials must never be stored in plaintext configurati
 The app persists non-sensitive configuration:
 - **Connection profiles:** ADME endpoint URL, tenant ID, client ID, data partition, auth method, and OAuth scope.
 - **Health results:** Summary and timestamp of the last successful service health check for each profile.
+- **Service-principal client secrets:** Stored separately in the OS credential store/keyring, never in the application database.
 
 **What is not stored:**
-- Client secrets, access tokens, refresh tokens, or token caches (session-only).
+- Access tokens, refresh tokens, or token caches (session-only).
 - MSAL authorization flows or OAuth authorization codes (session-only).
 - User authentication material (session-only; cleared on sign-out).
 

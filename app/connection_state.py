@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from app.models.connection import ADMEConnection, AuthMethod, ServiceHealthResult
+from app.services import settings_store
 
 if TYPE_CHECKING:
     from app.services.auth import UserAuthFlowStart, UserAuthState
@@ -20,6 +21,7 @@ HEALTH_RESULTS_KEY = "adme_health_results"
 HEALTH_ERROR_KEY = "adme_health_error"
 USER_AUTH_FLOW_KEY = "adme_user_auth_flow"
 USER_AUTH_STATE_KEY = "adme_user_auth_state"
+DEFAULT_CONNECTION_NAME = "default"
 OVERALL_STATE_LABELS = {
     "not_configured": "Not configured",
     "not_tested": "Configured · Validation pending",
@@ -51,12 +53,30 @@ class HealthSummary:
 
 
 def ensure_session_defaults(session_state: MutableSessionState) -> None:
-    """Ensure the expected ADME session keys are always present."""
+    """Ensure the expected ADME session keys are always present.
+
+    Also hydrates ``CONNECTION_KEY`` from the on-disk settings store when the
+    session has no connection yet.  Failures to read disk are logged and
+    swallowed at this layer because hydration is best-effort: the operator
+    can always re-enter settings in the form.
+    """
     session_state.setdefault(CONNECTION_KEY, None)
     session_state.setdefault(HEALTH_RESULTS_KEY, [])
     session_state.setdefault(HEALTH_ERROR_KEY, "")
     session_state.setdefault(USER_AUTH_FLOW_KEY, None)
     session_state.setdefault(USER_AUTH_STATE_KEY, None)
+
+    if session_state.get(CONNECTION_KEY) is None:
+        try:
+            settings_store.initialize_store()
+            active_name = settings_store.get_active_connection_name()
+            if active_name:
+                stored = settings_store.load_connection(active_name)
+                if stored is not None:
+                    session_state[CONNECTION_KEY] = stored
+        except settings_store.SettingsStoreError:
+            # Hydration is additive; never block session bootstrap on disk I/O.
+            pass
 
 
 def get_connection(session_state: SessionStateView) -> ADMEConnection | None:
@@ -70,11 +90,37 @@ def get_connection(session_state: SessionStateView) -> ADMEConnection | None:
 def save_connection(
     session_state: MutableSessionState,
     connection: ADMEConnection,
+    name: str = DEFAULT_CONNECTION_NAME,
 ) -> None:
-    """Persist the connection for the active Streamlit session only."""
-    if get_connection(session_state) != connection:
+    """Persist the connection for the active Streamlit session and to disk.
+
+    The durable store is updated before session state so failed persistence
+    never leaves the current Streamlit session showing unsaved settings.  If
+    the new connection differs from the current one, stale user auth/health
+    are cleared after the durable save succeeds.
+    """
+    connection_changed = get_connection(session_state) != connection
+    settings_store.save_connection(name, connection)
+    settings_store.set_active_connection(name)
+
+    if connection_changed:
         clear_user_auth_state(session_state)
     session_state[CONNECTION_KEY] = connection
+
+
+def forget_saved_connection(
+    session_state: MutableSessionState,
+    name: str = DEFAULT_CONNECTION_NAME,
+) -> None:
+    """Remove a saved connection from disk and clear it from this session.
+
+    Auth and health state are also cleared because they are tied to whatever
+    connection just got forgotten.
+    """
+    settings_store.delete_connection(name)
+    settings_store.clear_active_connection()
+    session_state[CONNECTION_KEY] = None
+    clear_user_auth_state(session_state)
 
 
 def get_pending_user_auth_flow(

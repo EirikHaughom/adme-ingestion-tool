@@ -73,7 +73,11 @@ def test_main_prompts_operator_to_open_settings_when_not_configured(
         "No ADME connection is configured for this session."
     ) in warning_messages
 
-    [page_link_call] = streamlit_recorder.calls_named("page_link")
+    [page_link_call] = [
+        call
+        for call in streamlit_recorder.calls_named("page_link")
+        if call.args == ("pages/1_⚙️_Settings.py",)
+    ]
     assert page_link_call.args == ("pages/1_⚙️_Settings.py",)
     assert page_link_call.kwargs == {
         "label": "Open Settings",

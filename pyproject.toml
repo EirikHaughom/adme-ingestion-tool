@@ -11,6 +11,7 @@ dependencies = [
     "msal>=1.31.0",
     "requests>=2.32.0",
     "python-dotenv>=1.1.0",
+    "keyring>=25.0",
     "sqlalchemy>=2.0",
     "alembic>=1.14",
 ]
@@ -35,6 +36,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "app/pages/1_⚙️_Settings.py" = ["N999"]
+"app/pages/2_🔑_Entitlements.py" = ["N999"]
 
 [tool.mypy]
 python_version = "3.11"

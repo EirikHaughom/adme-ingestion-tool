@@ -18,6 +18,10 @@
 - 2026-05-05T14:11:09.427+02:00: Issue #8 auth service now exposes MSAL user-flow helpers that return a redacted pending-flow wrapper and a session-scoped user auth state; user tokens are supplied back to `get_token()` explicitly and service-principal auth remains on `ClientSecretCredential`.
 - 2026-05-05T15:11:17.396+02:00: `ADMEConnection.token_scope` is static configuration; `connection.scope` trims it and falls back to the ADME default when blank so blank UI input does not invalidate otherwise valid connections.
 - 2026-05-05T15:11:17.396+02:00: Token scope Settings guidance was mechanically wrapped to satisfy Ruff E501 without changing copy semantics or backend auth behavior.
+- 2026-05-05: Added `app/services/settings_store.py` — stdlib-only sqlite3 store at `~/.adme-ingestion-tool/settings.db` (override via `ADME_SETTINGS_DB`). Schema matches Satya's spec: `connections` table keyed on operator-supplied `name`, partial unique index on `is_active = 1` enforces at-most-one-active. `client_secret` is dropped on every write — never persisted. Activation switches run inside `BEGIN IMMEDIATE` so the partial unique index stays honest.
+- 2026-05-05: All settings_store public functions self-initialize (call `initialize_store` first) so callers don't have to remember ordering. Errors are raised as `SettingsStoreError` with operator-safe messages; raw sqlite3 exceptions are logged at error level but never leaked. `set_active_connection` raises if the name is unknown — this is enforcement, not a no-op.
+- 2026-05-05: Wired `app/connection_state.py`: `ensure_session_defaults` now hydrates `CONNECTION_KEY` from the active row when the session is empty (best-effort: hydration failures are swallowed because the form can always re-collect input). `save_connection` gained an optional `name="default"` and now also writes through to the store and sets active. Added `forget_saved_connection` helper for the deferred picker UI.
+- 2026-05-05: Disk persistence is additive only. The in-memory contract is untouched: `get_connection`, `clear_user_auth_state`, and the auth/health helpers still behave exactly as before. Auth material (tokens, MSAL pending flows, user auth state) is explicitly out of the disk store and remains session-only.
 - 2026-05-05T19:48:42.932+02:00: Persistent storage planning keeps PGlite out of backend scope for this Python/Streamlit app; dev should default to SQLite through SQLAlchemy, while production uses an operator-supplied PostgreSQL database through a single database URL contract.
 - 2026-05-05T19:48:42.932+02:00: First persisted aggregates should be non-secret ADME connection profiles, an active-profile pointer, and latest health-check runs/results; client secrets, MSAL pending flows, user tokens, and auth caches remain Streamlit-session or external-secret concerns.
 - 2026-05-05T19:48:42.932+02:00: Proposed backend storage modules are `app\storage\config.py`, `engine.py`, `models.py`, `session.py`, `repositories\connection_profiles.py`, and `repositories\health_runs.py`, with Alembic metadata sourced from the storage models.
@@ -110,6 +114,43 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 **Status:** COMPLETE
 **Decision:** Manual token scope configuration merged to decisions.md
 **Outcome:** ADMEConnection now includes token_scope field with ADME default fallback. Settings UI exposes non-secret Token scope field. Both auth paths (user and service principal) consume connection.scope. All validation passed: pytest 80, ruff, mypy.
+## Learnings
+
+### 2026-05-06 — client_secret persistence via OS keyring
+- Lifted Satya's secret never persisted exclusion. SQLite schema unchanged; secret now lives in the OS keyring (Windows Credential Manager / macOS Keychain / Secret Service on Linux), keyed by `(KEYRING_SERVICE_NAME='adme-ingestion-tool', connection_name)`.
+- Added `keyring>=25.0` to `requirements.txt` (runtime, not dev).
+- New private helpers in `app/services/settings_store.py`: `_store_secret(name, secret)` and `_load_secret(name)`. Both lazy-import `keyring` so module import never fails on machines without the package.
+- `_store_secret` raises `SettingsStoreError` on backend failure so save_connection can surface 'secret not persisted' to the operator. `_load_secret` swallows everything and returns None — hydration is best-effort.
+- `save_connection`: DB row first, then `_store_secret` AFTER commit so rollback never orphans a secret. Empty secret → delete_password (PasswordDeleteError treated as valid no-op).
+- `delete_connection`: keyring entry cleared BEFORE the DB delete (opposite ordering, same orphan-prevention). Keyring failure here is logged, not raised.
+- `_row_to_connection` now hydrates `client_secret` via `_load_secret` — so list_connections, load_connection, and ensure_session_defaults all transparently restore the secret with no change to `app/connection_state.py`.
+
+### 2026-05-06 — Test isolation gotcha
+- Autouse `_isolate_settings_db` only covers SQLite. Without an autouse keyring fake, every existing test calling save_connection would hit the real Windows Credential Manager. Added autouse `_isolate_keyring` in `tests/conftest.py` that installs an in-memory fake keyring module into sys.modules.
+- Three pre-existing tests asserted `client_secret == ''` after round-trip — encoded the old drop-on-save contract. Updated: defense-in-depth check (secret bytes absent from SQLite file) preserved; secret IS now expected back from the faked keyring.
+- New file `tests/test_settings_store_keyring.py` covers: round-trip, empty-secret-deletes, no-entry-noop, delete clears both stores, backend exception -> None, missing package -> None, set failure -> SettingsStoreError + DB row preserved.
+
+### Counts
+- Targeted suite (settings_store + keyring + connection_state): 45 passed.
+- Full suite: 115 passed (was 105; +10 new keyring tests).
+## 2026-05-05 Entitlements service implementation (Mariel)
+- Added EntitlementsCallResult (frozen dataclass) to app/models/connection.py alongside ServiceHealthResult; updated module docstring to mention entitlements as a co-tenant of the UI/backend contract.
+- Created app/services/entitlements.py with fetch_member_self + fetch_groups, mirroring health.py: stdlib + requests, ENTITLEMENTS_TIMEOUT_SECONDS=5, allow_redirects=False, perf_counter latency rounded to 2dp, no internal retries.
+- Both fetchers route through _call_entitlements which validates connection.is_valid() and a non-empty token (ValueError, matching health.check_all), strips trailing slash from connection.endpoint, sends Authorization + data-partition-id + Accept: application/json.
+- Followed Mariel's task verbatim where it diverged from Satya's spec: members.self path is /api/entitlements/v2/members/me (not literal {me}); endpoint label is members.self (not members/{me}). The /members/me form matches the actual ADME entitlements contract.
+- Correlation ID extraction: case-insensitive lookup over correlation-id, x-correlation-id, request-id, x-request-id; first hit wins; built a lowercase mapping rather than relying on requests' CaseInsensitiveDict so any mapping-like headers object works.
+- Success path (2xx): parsed JSON dict goes into both data and raw_response. Non-dict JSON bodies degrade data to None but the call is still ok=True (defensive — entitlements always returns objects in practice).
+- Error path (non-2xx): error_message picks message/detail/error/title/errors fields shape-tolerantly and truncates to 500 chars; raw_response is parsed JSON if available, else raw text, else None.
+- Timeout returns ok=False, http_status=None, error_message='Request timed out after 5s'. Other RequestException returns 'TypeName: msg'. Defensive bare-Exception branch added for safety (pragma: no cover).
+- ruff and mypy both clean. No new dependencies. Did NOT touch tests (Charlie owns) or any page (Judson owns).
+
+## 2026-05-06 Entitlements 405 fix — my-groups + OID extraction (Mariel)
+- New `app/services/token_utils.py` with `extract_object_id(token)`: stdlib-only base64url + json. Pads payload segment with `=` until len%%4==0, returns `payload.get('oid')`, swallows ValueError/binascii.Error/UnicodeDecodeError/IndexError to None. No signature verification — trust boundary is MSAL, not this helper. Module docstring is explicit about that.
+- `app/services/entitlements.py`: deleted `fetch_member_self`, `MEMBERS_SELF_ENDPOINT_LABEL`, `MEMBERS_SELF_PATH`. The /members/me endpoint does not exist on ADME (returns 405); ripping it out at import time so any stale caller fails loudly (Charlie/Judson catch).
+- Added `MY_GROUPS_PATH_TEMPLATE = '/api/entitlements/v2/members/{object_id}/groups'` and `fetch_my_groups(connection, token, object_id)`. URL-encodes the OID via `urllib.parse.quote(object_id, safe='')` — defensive even though OIDs are GUIDs — then appends literal `?type=none`. Reuses `_call_entitlements` verbatim (timeout, correlation-id extraction, error parsing).
+- Per Mariel's explicit instruction the endpoint label is the f-string `f'members.{object_id}.groups'` (carries the actual OID). This diverges from Satya's note about a literal `{oid}` placeholder; followed Mariel because she's the requester and the task statement called it out specifically.
+- `object_id` validation matches the existing `token` empty-check pattern: ValueError on empty/whitespace before any HTTP work. `fetch_groups` and `GROUPS_PATH` untouched.
+- Tests and page rewire deliberately not touched — Charlie and Judson own those. ruff/mypy clean on both edited files.
 
 ## 2026-05-05: Persistent Storage Backend Contract (Complete)
 

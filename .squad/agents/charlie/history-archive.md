@@ -73,7 +73,7 @@ This file contains archived history entries for Charlie (Tester) to keep history
 ## Issue #5 Auth Callback Fix (2026-04-25)
 
 **Acceptance Criteria & Test Gates:**
-- Browser sign-in → token exchange success (no AADSTS7000218)
+- Browser sign-in ÔåÆ token exchange success (no AADSTS7000218)
 - Settings page success state
 - Error handling (cancelled browser, unavailable)
 - Code review: public client ID, scope preservation, service principal untouched
