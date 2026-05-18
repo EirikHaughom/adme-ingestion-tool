@@ -30,7 +30,7 @@ explanation.
 
 ```
 reference-data/   13 OSDU manifest templates, ~40 KB total
-schemas/         480 schema files, ~4.2 MB total
+schemas/         474 schema files, ~4.2 MB total
 ```
 
 The 13 reference-data manifests cover OSDU type-system tables that every
@@ -76,7 +76,7 @@ Darryl's vendor research predicted these would need pre-conversion:
 - `<namespace>` → `{{DATA_PARTITION_ID}}` (recursive find/replace)
 - Possibly `{{viewers}}`, `{{owners}}`, `{{legal-tag-name}}`
 
-**Actual result of scanning all 493 vendored `.json` files: zero matches
+**Actual result of scanning all 487 vendored `.json` files: zero matches
 for any of these tokens.** The reference-data manifests in `rc--3.0.0/`
 do not use literal-text substitution tokens at all. They ship with:
 

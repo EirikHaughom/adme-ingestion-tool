@@ -13,6 +13,8 @@ artifacts (master-data, work-products) belong under `app/data/datasets/`.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -40,6 +42,21 @@ def test_csv_to_json_wrapper_vendored() -> None:
 def test_vendor_package_importable() -> None:
     # __init__.py must exist so `app.vendor.azure_tno_loader` is a package.
     assert (VENDOR_DIR / "__init__.py").exists()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from app.vendor.azure_tno_loader import csv_to_json_wrapper; "
+                "print(csv_to_json_wrapper.create_manifest_from_csv.__name__)"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "create_manifest_from_csv"
 
 
 def test_reference_data_directory_populated() -> None:

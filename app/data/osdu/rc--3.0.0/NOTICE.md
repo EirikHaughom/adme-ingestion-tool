@@ -30,7 +30,7 @@ app/data/osdu/rc--3.0.0/
 ├── reference-data/   13 JSON manifest templates, ~40 KB total
 │                     (from rc--3.0.0/4-instances/TNO/reference-data/ in upstream;
 │                      contents are OSDU-generic lookup tables shared across datasets)
-└── schemas/         480 JSON schema files, ~4.2 MB total
+└── schemas/         474 JSON schema files, ~4.2 MB total
                      (from rc--3.0.0/3-schema/)
 ```
 
