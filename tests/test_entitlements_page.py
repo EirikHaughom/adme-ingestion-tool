@@ -154,6 +154,7 @@ def _patch_service(
     groups_calls: list[tuple[Any, str]] = []
     token_calls: list[Any] = []
     extract_calls: list[str] = []
+    extract_first_calls: list[tuple[str, tuple[str, ...]]] = []
 
     def fake_get_token(connection: ADMEConnection, **_: Any) -> str:
         token_calls.append(connection)
@@ -161,6 +162,13 @@ def _patch_service(
 
     def fake_extract_object_id(supplied_token: str) -> str | None:
         extract_calls.append(supplied_token)
+        return object_id
+
+    def fake_extract_first_string_claim(
+        supplied_token: str,
+        claim_names: tuple[str, ...],
+    ) -> str | None:
+        extract_first_calls.append((supplied_token, tuple(claim_names)))
         return object_id
 
     def fake_fetch_my_groups(
@@ -183,6 +191,11 @@ def _patch_service(
     monkeypatch.setattr(
         page_module, "extract_object_id", fake_extract_object_id
     )
+    monkeypatch.setattr(
+        page_module,
+        "extract_first_string_claim",
+        fake_extract_first_string_claim,
+    )
     monkeypatch.setattr(page_module, "fetch_my_groups", fake_fetch_my_groups)
     monkeypatch.setattr(page_module, "fetch_groups", fake_fetch_groups)
 
@@ -191,6 +204,7 @@ def _patch_service(
         "groups": groups_calls,
         "token": token_calls,
         "extract": extract_calls,
+        "extract_first": extract_first_calls,
     }
 
 
@@ -275,12 +289,13 @@ def test_page_blocks_when_data_partition_missing(
 # ---------------------------------------------------------------------------
 
 
-def test_page_blocks_when_token_has_no_oid_claim(
+def test_page_blocks_when_user_token_has_no_oid_claim(
     streamlit_recorder: StreamlitRecorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    streamlit_recorder.session_state[CONNECTION_KEY] = (
-        _service_principal_connection()
+    streamlit_recorder.session_state[CONNECTION_KEY] = _user_connection()
+    streamlit_recorder.session_state[USER_AUTH_STATE_KEY] = UserAuthState(
+        access_token="placeholder-user-token",
     )
     page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
     spy = _patch_service(page_module, monkeypatch, object_id=None)
@@ -291,6 +306,7 @@ def test_page_blocks_when_token_has_no_oid_claim(
     # extraction was attempted exactly once.
     assert len(spy["token"]) == 1
     assert spy["extract"] == ["test-token"]
+    assert spy["extract_first"] == []
 
     error_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("error")
@@ -331,9 +347,12 @@ def test_auto_run_fires_both_calls_on_first_render(
     page_module.main()
 
     assert len(spy["token"]) == 1
-    assert spy["extract"] == ["test-token"]
+    assert spy["extract"] == []
+    assert spy["extract_first"] == [
+        ("test-token", ("appid", "azp", "oid")),
+    ]
     assert len(spy["my_groups"]) == 1
-    # fetch_my_groups received the OID extracted from the token.
+    # fetch_my_groups received the member ID extracted from SP token claims.
     assert spy["my_groups"][0][2] == _OID
     assert len(spy["groups"]) == 1
     assert streamlit_recorder.session_state[AUTORUN_KEY] is True
@@ -360,6 +379,7 @@ def test_auto_run_does_not_fire_again_on_rerun(
     assert spy["groups"] == []
     assert spy["token"] == []
     assert spy["extract"] == []
+    assert spy["extract_first"] == []
 
 
 def test_rerun_button_bypasses_autorun_guard(
@@ -379,6 +399,25 @@ def test_rerun_button_bypasses_autorun_guard(
     # Both calls fire when the operator hits Re-run, even though autorun is True.
     assert len(spy["my_groups"]) == 1
     assert len(spy["groups"]) == 1
+
+
+def test_service_principal_member_id_falls_back_to_client_id_when_claim_missing(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _service_principal_connection()
+    streamlit_recorder.session_state[CONNECTION_KEY] = connection
+    page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
+    spy = _patch_service(page_module, monkeypatch, object_id=None)
+
+    page_module.main()
+
+    assert len(spy["my_groups"]) == 1
+    assert spy["my_groups"][0][2] == connection.client_id
+    assert spy["extract"] == []
+    assert spy["extract_first"] == [
+        ("test-token", ("appid", "azp", "oid")),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +506,7 @@ def test_empty_my_groups_shows_friendly_admin_message(
 
 
 # ---------------------------------------------------------------------------
-# All-groups expander
+# Caller-accessible groups expander
 # ---------------------------------------------------------------------------
 
 
@@ -484,20 +523,24 @@ def test_all_groups_expander_exists_collapsed_and_does_not_block_groups_call(
     page_module.main()
 
     expanders = streamlit_recorder.calls_named("expander")
-    all_groups_expanders = [
+    accessible_groups_expanders = [
         call for call in expanders
-        if call.args and "All groups in this partition" in call.args[0]
+        if call.args and "Groups accessible to this token" in call.args[0]
     ]
-    assert len(all_groups_expanders) == 1, (
-        "all-groups secondary expander should be rendered exactly once"
+    assert len(accessible_groups_expanders) == 1, (
+        "caller-accessible groups expander should be rendered exactly once"
     )
-    assert all_groups_expanders[0].kwargs.get("expanded") is False, (
-        "all-groups expander must default to collapsed"
+    assert accessible_groups_expanders[0].kwargs.get("expanded") is False, (
+        "caller-accessible groups expander must default to collapsed"
     )
 
     # Collapsing the expander does NOT prevent fetch_groups from running —
     # the call still fires so the latency chart and history have data.
     assert len(spy["groups"]) == 1
+    success_messages = [
+        call.args[0] for call in streamlit_recorder.calls_named("success")
+    ]
+    assert any("accessible to this token" in message for message in success_messages)
 
 
 # ---------------------------------------------------------------------------
@@ -557,13 +600,17 @@ def test_clear_history_button_empties_session_history(
     streamlit_recorder.session_state[LAST_GROUPS_KEY] = _ok_groups_result()
     streamlit_recorder.button_responses[CLEAR_LABEL] = True
     page_module = _load_entitlements_module(streamlit_recorder, monkeypatch)
-    _patch_service(page_module, monkeypatch)
+    spy = _patch_service(page_module, monkeypatch)
 
     page_module.main()
 
     assert streamlit_recorder.session_state[HISTORY_KEY] == []
     assert streamlit_recorder.session_state[LAST_MY_GROUPS_KEY] is None
     assert streamlit_recorder.session_state[LAST_GROUPS_KEY] is None
+    assert streamlit_recorder.session_state[AUTORUN_KEY] is True
+    assert streamlit_recorder.calls_named("rerun")
+    assert spy["my_groups"] == []
+    assert spy["groups"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -630,3 +677,5 @@ def test_user_impersonation_with_token_runs_test(
 
     assert len(spy["my_groups"]) == 1
     assert len(spy["groups"]) == 1
+    assert spy["extract"] == ["test-token"]
+    assert spy["extract_first"] == []

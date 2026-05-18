@@ -719,7 +719,8 @@ def test_fetch_full_record_button_calls_get_record_and_caches(
         streamlit_recorder.session_state[FULL_RECORD_CACHE_KEY],
     )
     assert "opendes:doc:1" in cache
-    assert cache["opendes:doc:1"]["id"] == "opendes:doc:1"
+    cached_record = cache["opendes:doc:1"]
+    assert cached_record["id"] == "opendes:doc:1"
 
 
 def test_fetch_full_record_404_sets_sticky_error(

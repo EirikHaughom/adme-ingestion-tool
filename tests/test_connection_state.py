@@ -221,6 +221,61 @@ def test_save_connection_clears_user_auth_when_token_scope_changes() -> None:
     assert session_state[HEALTH_ERROR_KEY] == ""
 
 
+def test_save_connection_preserves_session_when_persistence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_connection = ADMEConnection(
+        endpoint="https://old.energy.azure.com",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        client_id="22222222-2222-2222-2222-222222222222",
+        data_partition_id="old-opendes",
+    )
+    auth_state = UserAuthState(access_token="placeholder-user-token")
+    pending_flow = UserAuthFlowStart(
+        authorization_url="https://login.example.test/authorize",
+        flow={"state": "placeholder-state"},
+    )
+    health_results = [
+        ServiceHealthResult(
+            service_name="Storage",
+            path="/storage",
+            status="healthy",
+            status_code=200,
+        )
+    ]
+    session_state: dict[str, object] = {
+        CONNECTION_KEY: old_connection,
+        USER_AUTH_FLOW_KEY: pending_flow,
+        USER_AUTH_STATE_KEY: auth_state,
+        HEALTH_RESULTS_KEY: health_results,
+        HEALTH_ERROR_KEY: "",
+    }
+    new_connection = ADMEConnection(
+        endpoint="https://new.energy.azure.com",
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        client_id="22222222-2222-2222-2222-222222222222",
+        data_partition_id="new-opendes",
+    )
+
+    def fail_save(*_args: object, **_kwargs: object) -> None:
+        raise settings_store.SettingsStoreError("keyring locked")
+
+    def fail_set_active(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("set_active_connection should not be called")
+
+    monkeypatch.setattr(settings_store, "save_connection", fail_save)
+    monkeypatch.setattr(settings_store, "set_active_connection", fail_set_active)
+
+    with pytest.raises(settings_store.SettingsStoreError, match="keyring locked"):
+        save_connection(session_state, new_connection)
+
+    assert session_state[CONNECTION_KEY] == old_connection
+    assert session_state[USER_AUTH_FLOW_KEY] == pending_flow
+    assert session_state[USER_AUTH_STATE_KEY] == auth_state
+    assert session_state[HEALTH_RESULTS_KEY] == health_results
+    assert session_state[HEALTH_ERROR_KEY] == ""
+
+
 def test_summarize_health_counts_each_state() -> None:
     results = [
         ServiceHealthResult(

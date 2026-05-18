@@ -22,6 +22,12 @@
 - 2026-05-05: All settings_store public functions self-initialize (call `initialize_store` first) so callers don't have to remember ordering. Errors are raised as `SettingsStoreError` with operator-safe messages; raw sqlite3 exceptions are logged at error level but never leaked. `set_active_connection` raises if the name is unknown — this is enforcement, not a no-op.
 - 2026-05-05: Wired `app/connection_state.py`: `ensure_session_defaults` now hydrates `CONNECTION_KEY` from the active row when the session is empty (best-effort: hydration failures are swallowed because the form can always re-collect input). `save_connection` gained an optional `name="default"` and now also writes through to the store and sets active. Added `forget_saved_connection` helper for the deferred picker UI.
 - 2026-05-05: Disk persistence is additive only. The in-memory contract is untouched: `get_connection`, `clear_user_auth_state`, and the auth/health helpers still behave exactly as before. Auth material (tokens, MSAL pending flows, user auth state) is explicitly out of the disk store and remains session-only.
+- 2026-05-05T19:48:42.932+02:00: Persistent storage planning keeps PGlite out of backend scope for this Python/Streamlit app; dev should default to SQLite through SQLAlchemy, while production uses an operator-supplied PostgreSQL database through a single database URL contract.
+- 2026-05-05T19:48:42.932+02:00: First persisted aggregates should be non-secret ADME connection profiles, an active-profile pointer, and latest health-check runs/results; client secrets, MSAL pending flows, user tokens, and auth caches remain Streamlit-session or external-secret concerns.
+- 2026-05-05T19:48:42.932+02:00: Proposed backend storage modules are `app\storage\config.py`, `engine.py`, `models.py`, `session.py`, `repositories\connection_profiles.py`, and `repositories\health_runs.py`, with Alembic metadata sourced from the storage models.
+- 2026-05-05T20:00:00.287+02:00: Implemented `app\storage\` with SQLAlchemy 2.x repositories, Alembic migrations, SQLite auto-migration, PostgreSQL revision checks, URL redaction, and explicit rejection of secret-bearing connection profiles.
+- 2026-05-05T20:00:00.287+02:00: Alembic's required `app.storage.migrations` package owns migration helpers because Python cannot expose both an importable `app.storage.migrations` module and a same-named migrations package.
+- 2026-05-06T06:44:31.579Z: Reviewed PR #9 alternative storage implementation; local version provides clear SQLAlchemy/Alembic boundary, PostgreSQL production path, strong secret rejection/redaction, and complete profile+health model. Recommended STICK WITH LOCAL and close PR #9. Cherry-pick test DB override and raw secret checks if beneficial.
 
 ## 2026-04-24 Issue #2 Contract Corrections (Revision Batch)
 - Fixed Indexer probe contract: removed mutating GET /api/indexer/v2/reindex, replaced with read-only GET /api/indexer/v2/readiness_check
@@ -171,3 +177,32 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - create_legal_tag validates the seven required properties keys (countryOfOrigin/contractId/originator/dataType/securityClassification/personalData/exportClassification) before any HTTP work.
 - Quality gates green: ruff clean, mypy strict clean, pytest -q tests/test_ingestion_service.py tests/test_osdu_models.py = 108 passed (no regressions).
 - Did NOT touch Judson's `app/pages/4_🏷️_Legal_Tags.py` or any of Charlie's test files.
+## 2026-05-05: Persistent Storage Backend Contract (Complete)
+
+**Status:** PLANNING COMPLETE, SYNTHESIZED WITH TEAM
+
+**Decision:** SQLAlchemy 2.x + Alembic for dev SQLite and production PostgreSQL. Single `DATABASE_URL` configuration knob (not split ADME_*_* variables).
+
+**Key contract elements:**
+- `app/storage/` package boundary: config, engine, session, models, repositories
+- Repositories return domain dataclasses (ADMEConnection, HealthRunSummary), not ORM objects
+- No ORM imports outside `app/storage/` — keeps existing contracts in `app/connection_state` and `app/models/connection` unaffected
+- Strict: no client_secret or auth tokens in database (Charlie gates this)
+- Portable types only: String, Text, Integer, Boolean, DateTime (no JSONB, ARRAY, Postgres-only defaults)
+- Schema: connection_profiles, active_profile, health_runs, health_run_results
+- Transactions atomic per operation (save profile + set active = one transaction; record health run + all service rows = one transaction)
+
+**Conflict resolved with Scott:**
+- Scott proposed split environment variables (ADME_STORAGE_ENGINE, ADME_DB_HOST, ADME_DB_PORT, ADME_DB_USER, ADME_DB_PASSWORD)
+- Scott proposed storing client_secret in database
+- Decision: Single DATABASE_URL (Satya/Kevin/Charlie consensus). Scott to reconcile Key Vault integration to resolve into DATABASE_URL before storage layer sees it.
+
+**Phase 1 readiness (Kevin owns):**
+- Add sqlalchemy>=2.0, alembic>=1.14, psycopg[binary] as optional postgres extra
+- Repository contracts published before UI work (Judson)
+- Exit criteria: repo tests pass SQLite (in-memory + file) and PostgreSQL (testcontainers)
+- No app/ui code imports SQLAlchemy directly
+
+**Notes:** Satya/Scott/Judson/Charlie sign-off required before Kevin begins implementation. DATABASE_URL configuration precedence and secret redaction strategy locked. Future: Scott decides where client_secret lives in prod (Key Vault, env, OS keychain).
+
+- 2026-05-15T12:27:55.007+02:00: Ported PR #9's useful forget-connection idea as a storage-bridge API only. `app\storage\repositories\connection_profiles.py` already had delete/clear-active repository primitives, so the new bridge function delegates to the SQLAlchemy boundary, strips no new secrets, and leaves session auth cleanup to existing UI/session behavior.
