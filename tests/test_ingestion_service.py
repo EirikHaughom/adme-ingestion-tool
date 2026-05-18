@@ -220,6 +220,198 @@ def test_validate_manifest_json_rejects_item_with_non_string_kind() -> None:
     assert parsed is None
 
 
+# ---------------------------------------------------------------------------
+# validate_manifest_json — Data section: list AND object (WPC) shapes
+# ---------------------------------------------------------------------------
+
+
+def _wrap_manifest(manifest_body: str) -> str:
+    return (
+        '{"executionContext": {"manifest": '
+        + manifest_body
+        + "}}"
+    )
+
+
+def test_validate_manifest_json_accepts_legacy_data_list_shape() -> None:
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"Data": [{"kind": "osdu:wks:foo:1.0.0"}]}')
+    )
+    assert ok is True, message
+    assert message == ""
+    assert parsed is not None
+
+
+def test_validate_manifest_json_accepts_data_object_with_datasets() -> None:
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest(
+            '{"Data": {"Datasets": '
+            '[{"kind": "osdu:wks:dataset--File.Generic:1.0.0"}]}}'
+        )
+    )
+    assert ok is True, message
+    assert parsed is not None
+
+
+def test_validate_manifest_json_accepts_data_object_with_wpcs() -> None:
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest(
+            '{"Data": {"WorkProductComponents": '
+            '[{"kind": "osdu:wks:work-product-component--Generic:1.0.0"}]}}'
+        )
+    )
+    assert ok is True, message
+    assert parsed is not None
+
+
+def test_validate_manifest_json_accepts_data_object_with_workproduct() -> None:
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest(
+            '{"Data": {"WorkProduct": '
+            '{"kind": "osdu:wks:work-product--Generic:1.0.0"}}}'
+        )
+    )
+    assert ok is True, message
+    assert parsed is not None
+
+
+def test_validate_manifest_json_accepts_data_object_empty_workproduct() -> (
+    None
+):
+    """Builder emits ``WorkProduct: {}`` when there's no parent product."""
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest(
+            '{"Data": {"WorkProduct": {}, "Datasets": '
+            '[{"kind": "osdu:wks:dataset--File.Generic:1.0.0"}]}}'
+        )
+    )
+    assert ok is True, message
+    assert parsed is not None
+
+
+def test_validate_manifest_json_allows_unknown_keys_in_data_object() -> None:
+    """Forward compat: unknown keys inside Data are allowed."""
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest(
+            '{"Data": {"Datasets": '
+            '[{"kind": "osdu:wks:dataset--File.Generic:1.0.0"}], '
+            '"FutureField": 42}}'
+        )
+    )
+    assert ok is True, message
+    assert parsed is not None
+
+
+def test_validate_manifest_json_rejects_data_object_datasets_not_list() -> (
+    None
+):
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"Data": {"Datasets": {"kind": "x"}}}')
+    )
+    assert ok is False
+    assert "Data.Datasets" in message
+    assert "must be a list" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_rejects_data_object_wpcs_not_list() -> None:
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"Data": {"WorkProductComponents": "nope"}}')
+    )
+    assert ok is False
+    assert "Data.WorkProductComponents" in message
+    assert "must be a list" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_rejects_data_object_workproduct_not_dict() -> (
+    None
+):
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"Data": {"WorkProduct": [1, 2]}}')
+    )
+    assert ok is False
+    assert "Data.WorkProduct" in message
+    assert "must be an object" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_rejects_data_object_dataset_missing_kind() -> (
+    None
+):
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest(
+            '{"Data": {"Datasets": [{"id": "x"}]}}'
+        )
+    )
+    assert ok is False
+    assert "Data.Datasets[0]" in message
+    assert "kind" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_rejects_data_as_string() -> None:
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"Data": "not a list or object"}')
+    )
+    assert ok is False
+    assert "Data" in message
+    assert "list of records" in message
+    assert "Datasets" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_referencedata_still_list_only() -> None:
+    """The Data loosening must not affect ReferenceData."""
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"ReferenceData": {"Datasets": []}}')
+    )
+    assert ok is False
+    assert "ReferenceData" in message
+    assert "must be a list" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_masterdata_still_list_only() -> None:
+    """The Data loosening must not affect MasterData."""
+    ok, message, parsed = validate_manifest_json(
+        _wrap_manifest('{"MasterData": {"foo": "bar"}}')
+    )
+    assert ok is False
+    assert "MasterData" in message
+    assert "must be a list" in message
+    assert parsed is None
+
+
+def test_validate_manifest_json_round_trips_builder_output() -> None:
+    """Builder output must round-trip cleanly through the validator."""
+    import json as _json
+
+    from app.services.manifest_builder import build_file_generic_manifest
+
+    manifest = build_file_generic_manifest(
+        file_source="/path/to/uploaded/file.las",
+        file_id="opendes:dataset--File.Generic:abc123",
+        display_name="Sample LAS file",
+        description="Round-trip smoke test",
+        kind="osdu:wks:dataset--File.Generic:1.0.0",
+        legal_tag="opendes-open-test",
+        acl_owners="data.default.owners@opendes.contoso.com",
+        acl_viewers="data.default.viewers@opendes.contoso.com",
+        data_partition_id="opendes",
+    )
+    text = _json.dumps(manifest)
+    ok, message, parsed = validate_manifest_json(text)
+    assert ok is True, message
+    assert message == ""
+    assert parsed is not None
+    # Sanity: confirm Builder really emits Data as object (the case
+    # that motivated the loosening).
+    assert isinstance(
+        parsed["executionContext"]["manifest"]["Data"], dict
+    )
+
+
 # ===========================================================================
 # substitute_manifest_placeholders
 # ===========================================================================

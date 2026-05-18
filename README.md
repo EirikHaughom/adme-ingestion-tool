@@ -41,6 +41,10 @@ streamlit run app/main.py
 pytest
 ```
 
+## Walkthroughs
+
+- [TNO end-to-end: ingest a single file](docs/walkthroughs/tno-end-to-end.md) — upload → build manifest → submit → verify in Search.
+
 ## Operator Flow
 
 1. Open the welcome page to see whether the current Streamlit session already has an ADME connection.
@@ -66,7 +70,10 @@ app/              # Streamlit application
     1_⚙️_Instance_Configuration.py  # Setup: ADME connection form + health validation
     2_🔑_Entitlements.py            # Setup: entitlements smoke test
     3_🏷️_Legal_Tags.py             # Setup: legal-tag CRUD
-    4_📥_Ingestion.py               # Operate: manifest ingestion + workflow polling
+    4_📥_Ingest.py                  # Ingest: landing page / method chooser
+    5_📄_Manifest.py                # Ingest: manifest ingestion + workflow polling
+    6_📂_File.py                    # Ingest: single-file upload via OSDU File Service v2
+    7_🔍_Search.py                  # Operate: Search Service queries
   services/       # Auth and service-health integrations
 tests/            # Test suite
 .streamlit/       # Streamlit config

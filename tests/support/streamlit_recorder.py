@@ -1,6 +1,6 @@
 """Test doubles for Streamlit page assertions.
 
-Extensions added for the ingestion page (``app/pages/4_📥_Ingestion.py``):
+Extensions added for the ingestion page (``app/pages/5_📄_Manifest.py``):
 
 - ``columns(spec)`` returns a list of ``StreamlitContext`` instances so the
   page can do ``cols = st.columns(3); with cols[0]: ...``.  The page uses
@@ -169,6 +169,7 @@ class StreamlitRecorder(ModuleType):
         self.widget_values: dict[str, Any] = {}
         self.submit_responses: dict[str, bool] = {}
         self.button_responses: dict[str, bool] = {}
+        self.file_uploader_responses: dict[str, Any] = {}
 
     def form(self, key: str, **kwargs: Any) -> StreamlitContext:
         """Return a context manager for a Streamlit form."""
@@ -339,6 +340,26 @@ class StreamlitRecorder(ModuleType):
             )
         )
         return str(self.widget_values.get(label, value))
+
+    def file_uploader(
+        self, label: str, **kwargs: Any
+    ) -> Any:
+        """Record a file_uploader and return a configurable mock value.
+
+        Tests inject a fake "uploaded file" via
+        ``recorder.file_uploader_responses[label]`` — typically an instance
+        of :class:`FakeUploadedFile` or any object exposing ``name``,
+        ``size``, ``type`` attrs and a ``getvalue()`` method.
+        Returns ``None`` (no file selected) when nothing is registered.
+        """
+        self.calls.append(
+            StreamlitCall(
+                name="file_uploader",
+                args=(label,),
+                kwargs=kwargs,
+            )
+        )
+        return self.file_uploader_responses.get(label)
 
     def Page(  # noqa: N802 (mirrors Streamlit's actual public name)
         self, page: Any, **kwargs: Any
