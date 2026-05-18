@@ -26,12 +26,15 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 from app.models.osdu import RunRow, UploadRow, WorkflowStatus, parse_workflow_status
 
 __all__ = [
+    "DBInfo",
     "DEFAULT_DB_PATH",
     "ENV_DB_PATH",
+    "RUN_HISTORY_WRITE_ERRORS",
     "VALID_SUBMIT_SOURCES",
     "clear_all",
     "db_info",
@@ -47,6 +50,12 @@ __all__ = [
 
 DEFAULT_DB_PATH: Path = Path.home() / ".adme-ingestion-tool" / "run-history.db"
 ENV_DB_PATH = "ADME_RUN_HISTORY_DB"
+
+RUN_HISTORY_WRITE_ERRORS: tuple[type[BaseException], ...] = (
+    OSError,
+    sqlite3.Error,
+    ValueError,
+)
 
 VALID_SUBMIT_SOURCES: frozenset[str] = frozenset(
     {"manifest_page", "builder", "bulk_runner", "tno_loader"}
@@ -79,6 +88,16 @@ CREATE INDEX IF NOT EXISTS idx_runs_partition   ON workflow_runs(data_partition_
 CREATE INDEX IF NOT EXISTS idx_uploads_when      ON file_uploads(uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_uploads_partition ON file_uploads(data_partition_id);
 """
+
+
+class DBInfo(TypedDict):
+    """Diagnostic shape returned by :func:`db_info`."""
+
+    path: str
+    size_bytes: int | None
+    runs: int
+    uploads: int
+    user_version: int
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +229,9 @@ def record_workflow_submit(
     """Record a workflow submit. Status is implicitly ``"submitted"``.
 
     ``submitted_at`` is caller-supplied (ISO 8601 UTC, e.g.
-    ``"2026-05-12T15:00:00Z"``) so tests can pin it.
+    ``"2026-05-12T15:00:00Z"``) so tests can pin it. Duplicate
+    non-terminal rows refresh their submit metadata; terminal rows are
+    preserved so a replayed ``run_id`` cannot erase completion data.
     """
     _require_nonempty("run_id", run_id)
     _require_nonempty("submitted_at", submitted_at)
@@ -220,11 +241,22 @@ def record_workflow_submit(
     with _connect() as conn, conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO workflow_runs (
+            INSERT INTO workflow_runs (
                 run_id, submitted_at, finished_at, status, kind,
                 correlation_id, error_message, latency_ms, submit_source,
                 data_partition_id
             ) VALUES (?, ?, NULL, 'submitted', ?, ?, NULL, NULL, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                submitted_at = excluded.submitted_at,
+                finished_at = NULL,
+                status = 'submitted',
+                kind = excluded.kind,
+                correlation_id = excluded.correlation_id,
+                error_message = NULL,
+                latency_ms = NULL,
+                submit_source = excluded.submit_source,
+                data_partition_id = excluded.data_partition_id
+            WHERE workflow_runs.status NOT IN ('finished', 'failed')
             """,
             (
                 run_id,
@@ -320,13 +352,14 @@ def list_workflow_runs(
     limit: int = 100,
     status: WorkflowStatus | None = None,
     since: str | None = None,
+    until: str | None = None,
     data_partition_id: str | None = None,
 ) -> list[RunRow]:
     """Return workflow rows, newest first.
 
-    ``since`` is ISO 8601 UTC; filters ``submitted_at >= since`` via
-    lexicographic comparison (safe because all stored timestamps are
-    same-shape Z-suffixed UTC strings).
+    ``since`` / ``until`` are ISO 8601 UTC bounds applied via
+    lexicographic comparison, which is safe because all stored timestamps
+    are same-shape Z-suffixed UTC strings.
     """
     limit = _clamp_limit(limit)
 
@@ -350,6 +383,9 @@ def list_workflow_runs(
     if since is not None:
         clauses.append("submitted_at >= ?")
         params.append(since)
+    if until is not None:
+        clauses.append("submitted_at <= ?")
+        params.append(until)
     if data_partition_id is not None:
         clauses.append("data_partition_id = ?")
         params.append(data_partition_id)
@@ -371,6 +407,7 @@ def list_file_uploads(
     *,
     limit: int = 100,
     since: str | None = None,
+    until: str | None = None,
     data_partition_id: str | None = None,
 ) -> list[UploadRow]:
     """Return file-upload rows, newest first."""
@@ -381,6 +418,9 @@ def list_file_uploads(
     if since is not None:
         clauses.append("uploaded_at >= ?")
         params.append(since)
+    if until is not None:
+        clauses.append("uploaded_at <= ?")
+        params.append(until)
     if data_partition_id is not None:
         clauses.append("data_partition_id = ?")
         params.append(data_partition_id)
@@ -458,7 +498,7 @@ def clear_all() -> None:
 # ---------------------------------------------------------------------------
 
 
-def db_info() -> dict[str, object]:
+def db_info() -> DBInfo:
     """Return a diagnostic snapshot for the Actions tab.
 
     Keys: ``path`` (str), ``size_bytes`` (int or None), ``runs`` (int),

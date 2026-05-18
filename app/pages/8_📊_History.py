@@ -185,7 +185,7 @@ def _render_runs_tab(current_partition: str) -> None:
         help="Re-read the local DB.",
     )
 
-    since = _date_range_to_since(date_range)
+    since, until = _date_range_to_bounds(date_range)
     partition_filter = None if show_all else (current_partition or None)
 
     rows: list[RunRow] = []
@@ -201,6 +201,7 @@ def _render_runs_tab(current_partition: str) -> None:
             limit=int(limit),
             status=status_filter,
             since=since,
+            until=until,
             data_partition_id=partition_filter,
         )
         for row in chunk:
@@ -285,12 +286,13 @@ def _render_uploads_tab(current_partition: str) -> None:
         help="Re-read the local DB.",
     )
 
-    since = _date_range_to_since(date_range)
+    since, until = _date_range_to_bounds(date_range)
     partition_filter = None if show_all else (current_partition or None)
 
     rows: list[UploadRow] = list_file_uploads(
         limit=int(limit),
         since=since,
+        until=until,
         data_partition_id=partition_filter,
     )
 
@@ -423,23 +425,45 @@ def _render_partition_header(
     return bool(show_all)
 
 
-def _date_range_to_since(value: Any) -> str | None:
-    """Convert a Streamlit ``date_input`` value to a ``since`` ISO string.
+def _date_range_to_bounds(value: Any) -> tuple[str | None, str | None]:
+    """Convert a Streamlit ``date_input`` value to inclusive ISO bounds.
 
-    Returns ``None`` when no range is set or the start date is missing —
-    in which case the underlying query returns all rows up to ``limit``.
+    Returns ``(None, None)`` when no range is set. A one-sided range
+    applies only the lower bound; a single date object is treated as that
+    whole UTC day.
     """
     if not value:
-        return None
+        return (None, None)
     if isinstance(value, (list, tuple)):
         if not value:
-            return None
+            return (None, None)
         start = value[0]
+        end = value[1] if len(value) > 1 else None
     else:
         start = value
-    if not hasattr(start, "year"):
+        end = value
+    return (
+        _date_to_iso_bound(start, end_of_day=False),
+        _date_to_iso_bound(end, end_of_day=True),
+    )
+
+
+def _date_to_iso_bound(value: Any, *, end_of_day: bool) -> str | None:
+    """Return a UTC ISO date bound for a Streamlit date value."""
+    if value is None or not hasattr(value, "year"):
         return None
-    dt = datetime(start.year, start.month, start.day, tzinfo=UTC)
+    if end_of_day:
+        dt = datetime(
+            value.year,
+            value.month,
+            value.day,
+            23,
+            59,
+            59,
+            tzinfo=UTC,
+        )
+    else:
+        dt = datetime(value.year, value.month, value.day, tzinfo=UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import date
 from pathlib import Path
 from types import ModuleType
-from typing import Any
 
 import pytest
 
@@ -176,6 +176,79 @@ def test_show_all_partitions_toggle_includes_other_partitions(
     run_ids = " ".join(str(v) for v in frame["Run ID"].tolist())
     assert "r-here" in run_ids
     assert "r-there" in run_ids
+
+
+# ===========================================================================
+# Date filters
+# ===========================================================================
+
+
+def test_runs_tab_date_range_excludes_rows_after_end_date(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_run(run_id="r-before", submitted_at="2026-05-11T23:59:59Z")
+    _seed_run(run_id="r-in", submitted_at="2026-05-12T15:00:00Z")
+    _seed_run(run_id="r-after", submitted_at="2026-05-13T00:00:00Z")
+    streamlit_recorder.session_state[CONNECTION_KEY] = _connection()
+    streamlit_recorder.widget_values["Submitted within"] = (
+        date(2026, 5, 12),
+        date(2026, 5, 12),
+    )
+
+    page = _load_page(streamlit_recorder, monkeypatch)
+    page.main()
+
+    frame = streamlit_recorder.calls_named("dataframe")[0].args[0]
+    run_ids = " ".join(str(v) for v in frame["Run ID"].tolist())
+    assert "r-in" in run_ids
+    assert "r-before" not in run_ids
+    assert "r-after" not in run_ids
+
+
+def test_uploads_tab_date_range_excludes_rows_after_end_date(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_history.record_file_upload(
+        record_id="u-before",
+        uploaded_at="2026-05-11T23:59:59Z",
+        display_name="before.las",
+        file_source="/staging/before",
+        size_bytes=1,
+        data_partition_id="opendes",
+    )
+    run_history.record_file_upload(
+        record_id="u-in",
+        uploaded_at="2026-05-12T15:00:00Z",
+        display_name="in.las",
+        file_source="/staging/in",
+        size_bytes=1,
+        data_partition_id="opendes",
+    )
+    run_history.record_file_upload(
+        record_id="u-after",
+        uploaded_at="2026-05-13T00:00:00Z",
+        display_name="after.las",
+        file_source="/staging/after",
+        size_bytes=1,
+        data_partition_id="opendes",
+    )
+    streamlit_recorder.session_state[CONNECTION_KEY] = _connection()
+    streamlit_recorder.widget_values["Uploaded within"] = (
+        date(2026, 5, 12),
+        date(2026, 5, 12),
+    )
+
+    page = _load_page(streamlit_recorder, monkeypatch)
+    page.main()
+
+    df_calls = streamlit_recorder.calls_named("dataframe")
+    frame = next(call.args[0] for call in df_calls if "Display name" in call.args[0])
+    display_names = " ".join(str(v) for v in frame["Display name"].tolist())
+    assert "in.las" in display_names
+    assert "before.las" not in display_names
+    assert "after.las" not in display_names
 
 
 # ===========================================================================

@@ -10,7 +10,6 @@ import pytest
 from app.models.osdu import RunRow, UploadRow, WorkflowStatus
 from app.services import run_history
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -334,6 +333,19 @@ def test_list_workflow_runs_filters_by_since(
     assert [r.run_id for r in rows] == ["r-new"]
 
 
+def test_list_workflow_runs_filters_by_since_and_until(
+    run_history_tmp_db: Path,
+) -> None:
+    _seed_run(run_id="r-before", submitted_at="2026-05-11T23:59:59Z")
+    _seed_run(run_id="r-in", submitted_at="2026-05-12T15:00:00Z")
+    _seed_run(run_id="r-after", submitted_at="2026-05-13T00:00:00Z")
+    rows = run_history.list_workflow_runs(
+        since="2026-05-12T00:00:00Z",
+        until="2026-05-12T23:59:59Z",
+    )
+    assert [r.run_id for r in rows] == ["r-in"]
+
+
 def test_list_workflow_runs_honors_limit_and_orders_desc(
     run_history_tmp_db: Path,
 ) -> None:
@@ -353,6 +365,19 @@ def test_list_file_uploads_filters_by_partition(
     _seed_upload(record_id="u-b", data_partition_id="other")
     rows = run_history.list_file_uploads(data_partition_id="opendes")
     assert [r.record_id for r in rows] == ["u-a"]
+
+
+def test_list_file_uploads_filters_by_since_and_until(
+    run_history_tmp_db: Path,
+) -> None:
+    _seed_upload(record_id="u-before", uploaded_at="2026-05-11T23:59:59Z")
+    _seed_upload(record_id="u-in", uploaded_at="2026-05-12T15:00:00Z")
+    _seed_upload(record_id="u-after", uploaded_at="2026-05-13T00:00:00Z")
+    rows = run_history.list_file_uploads(
+        since="2026-05-12T00:00:00Z",
+        until="2026-05-12T23:59:59Z",
+    )
+    assert [r.record_id for r in rows] == ["u-in"]
 
 
 def test_list_workflow_runs_unknown_status_returns_empty(
@@ -421,7 +446,7 @@ def test_clear_all_removes_every_row(run_history_tmp_db: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Idempotent re-upload + re-submit (INSERT OR REPLACE)
+# Idempotent upload + duplicate workflow submit
 # ---------------------------------------------------------------------------
 
 
@@ -433,6 +458,37 @@ def test_record_file_upload_replaces_existing_record_id(
     rows = run_history.list_file_uploads()
     assert len(rows) == 1
     assert rows[0].display_name == "v2.csv"
+
+
+def test_record_workflow_submit_preserves_terminal_duplicate_run_id(
+    run_history_tmp_db: Path,
+) -> None:
+    _seed_run(run_id="r1", kind="kind-v1", submit_source="manifest_page")
+    run_history.record_workflow_finish(
+        run_id="r1",
+        finished_at="2026-05-12T15:10:00Z",
+        status=WorkflowStatus.FAILED,
+        latency_ms=600_000,
+        error_message="terminal failure",
+    )
+
+    _seed_run(
+        run_id="r1",
+        submitted_at="2026-05-12T16:00:00Z",
+        kind="kind-v2",
+        correlation_id="corr-v2",
+        submit_source="builder",
+    )
+
+    rows = run_history.list_workflow_runs()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == WorkflowStatus.FAILED
+    assert row.finished_at == "2026-05-12T15:10:00Z"
+    assert row.latency_ms == 600_000
+    assert row.error_message == "terminal failure"
+    assert row.kind == "kind-v1"
+    assert row.submit_source == "manifest_page"
 
 
 # ---------------------------------------------------------------------------

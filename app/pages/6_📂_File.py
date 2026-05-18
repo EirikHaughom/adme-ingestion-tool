@@ -44,7 +44,10 @@ from app.services.files import (  # noqa: E402
     upload_file_bytes,
 )
 from app.services.legal_tags import list_legal_tags  # noqa: E402
-from app.services.run_history import record_file_upload  # noqa: E402
+from app.services.run_history import (  # noqa: E402
+    RUN_HISTORY_WRITE_ERRORS,
+    record_file_upload,
+)
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
@@ -667,7 +670,7 @@ def _run_upload_pipeline(
                         size_bytes=size_bytes,
                         data_partition_id=connection.data_partition_id,
                     )
-                except (OSError, ValueError):
+                except RUN_HISTORY_WRITE_ERRORS:
                     pass
             if not metadata_result.ok:
                 # Critical edge case: bytes landed, metadata didn't —

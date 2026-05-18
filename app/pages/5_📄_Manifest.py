@@ -54,6 +54,7 @@ from app.services.manifest_builder import (  # noqa: E402
     build_file_generic_manifest,
 )
 from app.services.run_history import (  # noqa: E402
+    RUN_HISTORY_WRITE_ERRORS,
     record_workflow_finish,
     record_workflow_submit,
 )
@@ -1053,7 +1054,7 @@ def _run_submit_pipeline(connection: ADMEConnection) -> None:
                     submit_source=submit_source,
                     data_partition_id=connection.data_partition_id,
                 )
-            except (OSError, ValueError):
+            except RUN_HISTORY_WRITE_ERRORS:
                 # Run-history is auxiliary — never break the submit flow
                 # because we couldn't write the local DB.
                 pass
@@ -1636,7 +1637,7 @@ def _record_terminal(
             latency_ms=latency_ms,
             error_message=error_message,
         )
-    except (OSError, ValueError):
+    except RUN_HISTORY_WRITE_ERRORS:
         pass
 
 
