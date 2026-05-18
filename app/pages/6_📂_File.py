@@ -44,6 +44,10 @@ from app.services.files import (  # noqa: E402
     upload_file_bytes,
 )
 from app.services.legal_tags import list_legal_tags  # noqa: E402
+from app.services.run_history import (  # noqa: E402
+    RUN_HISTORY_WRITE_ERRORS,
+    record_file_upload,
+)
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
@@ -653,6 +657,21 @@ def _run_upload_pipeline(
                     display_name=resolved_display_name,
                     file_source=file_source,
                 )
+                # Persist to local run-history DB. Aux storage — swallow
+                # errors so a DB write failure can't break the upload UX.
+                try:
+                    record_file_upload(
+                        record_id=metadata_result.record_id,
+                        uploaded_at=datetime.now(tz=UTC).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ"
+                        ),
+                        display_name=resolved_display_name,
+                        file_source=file_source,
+                        size_bytes=size_bytes,
+                        data_partition_id=connection.data_partition_id,
+                    )
+                except RUN_HISTORY_WRITE_ERRORS:
+                    pass
             if not metadata_result.ok:
                 # Critical edge case: bytes landed, metadata didn't —
                 # preserve the file id so the operator can recover.

@@ -75,6 +75,33 @@ def _isolate_settings_db(
 
 
 @pytest.fixture(autouse=True)
+def _isolate_run_history_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the run-history store at a per-test SQLite path.
+
+    Mirrors ``_isolate_settings_db``: without this fixture, any test that
+    touches the Manifest / File / History pages or the run_history
+    service directly would write to the operator's real
+    ``~/.adme-ingestion-tool/run-history.db``. Autouse keeps tests off
+    the user's profile by default.
+    """
+    target = tmp_path / "run-history.db"
+    monkeypatch.setenv("ADME_RUN_HISTORY_DB", str(target))
+    return target
+
+
+@pytest.fixture
+def run_history_tmp_db(_isolate_run_history_db: Path) -> Path:
+    """Return the per-test run-history DB path.
+
+    Thin wrapper around the autouse isolator so tests that want the
+    path explicitly (for assertions on db_info, etc.) can request it.
+    """
+    return _isolate_run_history_db
+
+
+@pytest.fixture(autouse=True)
 def _isolate_storage_database(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -53,6 +53,11 @@ from app.services.manifest_builder import (  # noqa: E402
     DEFAULT_DATASET_KIND,
     build_file_generic_manifest,
 )
+from app.services.run_history import (  # noqa: E402
+    RUN_HISTORY_WRITE_ERRORS,
+    record_workflow_finish,
+    record_workflow_submit,
+)
 from app.services.verification import search_records_by_kind  # noqa: E402
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
@@ -101,6 +106,11 @@ MANIFEST_BUILDER_DESCRIPTION_KEY = "manifest_builder_description"
 MANIFEST_BUILDER_KIND_KEY = "manifest_builder_kind"
 MANIFEST_BUILDER_PENDING_TEXT_KEY = "manifest_builder_pending_text"
 MANIFEST_BUILDER_LAST_GENERATED_KEY = "manifest_builder_last_generated"
+
+# Breadcrumb for run-history submit_source tagging. Set to "builder" when
+# the Builder's Generate button fires; read (and cleared) when Validate &
+# Ingest submits. Default when unset is the manifest_page paste path.
+MANIFEST_SUBMIT_SOURCE_KEY = "manifest_submit_source"
 
 # Source for "From recent uploads" — entries with `record_id`,
 # `display_name`, and `file_source` keys are surfaced. Today the File
@@ -811,6 +821,8 @@ def _handle_generate_click(
     st.session_state[MANIFEST_BUILDER_PENDING_TEXT_KEY] = json.dumps(
         manifest, indent=2
     )
+    # Tag the next submit as Builder-sourced for run-history reporting.
+    st.session_state[MANIFEST_SUBMIT_SOURCE_KEY] = "builder"
     st.success("✅ Manifest generated — loaded into the editor below.")
     st.rerun()
 
@@ -1025,6 +1037,28 @@ def _run_submit_pipeline(connection: ADMEConnection) -> None:
             st.session_state[VERIFICATION_RESULTS_KEY] = []
             st.session_state[VERIFICATION_RETRIES_KEY] = {}
 
+            # Run-history: record the submit. submit_source breadcrumb is
+            # set by the Builder Generate click; default is manifest_page.
+            # Clear it after read so the next submit starts fresh.
+            submit_source = st.session_state.pop(
+                MANIFEST_SUBMIT_SOURCE_KEY, "manifest_page"
+            )
+            try:
+                record_workflow_submit(
+                    run_id=submit_result.run_id,
+                    submitted_at=_format_utc_iso(
+                        st.session_state[SUBMIT_STARTED_AT_KEY]
+                    ),
+                    kind=_top_level_kind(parsed),
+                    correlation_id=submit_result.correlation_id,
+                    submit_source=submit_source,
+                    data_partition_id=connection.data_partition_id,
+                )
+            except RUN_HISTORY_WRITE_ERRORS:
+                # Run-history is auxiliary — never break the submit flow
+                # because we couldn't write the local DB.
+                pass
+
             st.success(
                 f"✅ Workflow accepted — run id `{submit_result.run_id}`. "
                 "Polling status…"
@@ -1120,6 +1154,12 @@ def _render_run_status() -> None:
         st.session_state[LAST_WORKFLOW_RESULT_KEY] = synthetic
         st.session_state[WORKFLOW_STATUS_KEY] = WorkflowStatus.FAILED
         st.session_state[POLLING_ACTIVE_KEY] = False
+        _record_terminal(
+            run_id=run_id,
+            started_at=started_at,
+            status=WorkflowStatus.FAILED,
+            error_message="Polling timed out after 30 minutes.",
+        )
         _render_workflow_error(synthetic, headline="Workflow timed out")
         st.session_state[INGESTION_LAST_ERROR_KEY] = _format_error_summary(
             "Workflow timed out",
@@ -1149,12 +1189,25 @@ def _render_run_status() -> None:
     if poll_result.status == WorkflowStatus.FINISHED:
         st.session_state[POLLING_ACTIVE_KEY] = False
         st.session_state[VERIFICATION_DONE_KEY] = False
+        _record_terminal(
+            run_id=run_id,
+            started_at=started_at,
+            status=WorkflowStatus.FINISHED,
+            error_message=None,
+        )
         st.success("✅ Workflow finished — verifying records…")
         st.rerun()
         return
 
     if poll_result.status == WorkflowStatus.FAILED:
         st.session_state[POLLING_ACTIVE_KEY] = False
+        _record_terminal(
+            run_id=run_id,
+            started_at=started_at,
+            status=WorkflowStatus.FAILED,
+            error_message=poll_result.error_message
+            or poll_result.message,
+        )
         _render_workflow_error(poll_result, headline="Workflow failed")
         st.session_state[INGESTION_LAST_ERROR_KEY] = _format_error_summary(
             "Workflow failed",
@@ -1536,6 +1589,56 @@ def _render_workflow_error(
 # ---------------------------------------------------------------------------
 # Manifest helpers
 # ---------------------------------------------------------------------------
+
+
+def _format_utc_iso(value: datetime) -> str:
+    """Format a UTC ``datetime`` as an ISO 8601 Z-suffix string.
+
+    Matches the shape the run-history DB stores
+    (``"2026-05-12T15:00:00Z"``) so lexicographic comparisons work.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _top_level_kind(parsed_manifest: dict) -> str | None:
+    """Return the top-level manifest ``kind`` string, or ``None``.
+
+    The Manifest page submits one manifest per run; bulk/TNO loaders
+    pass ``"mixed"`` at their own call sites.
+    """
+    kind = parsed_manifest.get("kind") if isinstance(parsed_manifest, dict) else None
+    return kind if isinstance(kind, str) and kind else None
+
+
+def _record_terminal(
+    *,
+    run_id: str,
+    started_at: datetime,
+    status: WorkflowStatus,
+    error_message: str | None,
+) -> None:
+    """Record a terminal workflow state in the local run-history DB.
+
+    Computes ``latency_ms`` from ``started_at`` (wall clock) and converts
+    the current time to the ISO 8601 string the DB stores. Swallows
+    DB errors — run-history is auxiliary.
+    """
+    if status not in (WorkflowStatus.FINISHED, WorkflowStatus.FAILED):
+        return
+    now = datetime.now(tz=UTC)
+    latency_ms = int(max(0.0, (now - started_at).total_seconds() * 1000.0))
+    try:
+        record_workflow_finish(
+            run_id=run_id,
+            finished_at=_format_utc_iso(now),
+            status=status,
+            latency_ms=latency_ms,
+            error_message=error_message,
+        )
+    except RUN_HISTORY_WRITE_ERRORS:
+        pass
 
 
 def _extract_unique_kinds(parsed_manifest: dict) -> list[str]:

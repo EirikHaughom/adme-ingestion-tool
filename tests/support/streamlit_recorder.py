@@ -204,6 +204,55 @@ class StreamlitRecorder(ModuleType):
         """Return a context manager that also exposes ``.update(...)``."""
         return StreamlitStatusContext(self, (label,), kwargs)
 
+    def tabs(self, labels: list[str], **kwargs: Any) -> list[StreamlitContext]:
+        """Return one ``StreamlitContext`` per tab label.
+
+        Mirrors :meth:`columns`: records the call once, then returns
+        independent context managers so pages can do ``with tabs[i]:``.
+        """
+        self.calls.append(
+            StreamlitCall(name="tabs", args=(labels,), kwargs=kwargs)
+        )
+        return [
+            StreamlitContext(self, "tab", (label,), {}) for label in labels
+        ]
+
+    def number_input(
+        self,
+        label: str,
+        min_value: Any = None,
+        max_value: Any = None,
+        value: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Record a number_input and return the configured / default value."""
+        self.calls.append(
+            StreamlitCall(
+                name="number_input",
+                args=(label,),
+                kwargs={
+                    "min_value": min_value,
+                    "max_value": max_value,
+                    "value": value,
+                    **kwargs,
+                },
+            )
+        )
+        return self.widget_values.get(label, value)
+
+    def checkbox(
+        self, label: str, value: bool = False, **kwargs: Any
+    ) -> bool:
+        """Record a checkbox and return the configured value (bool)."""
+        self.calls.append(
+            StreamlitCall(
+                name="checkbox",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return bool(self.widget_values.get(label, value))
+
     def text_input(self, label: str, value: str = "", **kwargs: Any) -> str:
         """Record a text input and return the configured widget value."""
         self.calls.append(
