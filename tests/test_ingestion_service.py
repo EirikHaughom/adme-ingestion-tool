@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote
 
 import pytest
 import requests  # type: ignore[import-untyped]
@@ -28,6 +27,7 @@ from app.services.ingestion import (
     substitute_manifest_placeholders,
     validate_manifest_json,
 )
+from app.services.legal_tags import LEGAL_TAG_VALIDATE_PATH
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -475,12 +475,12 @@ def test_substitute_manifest_placeholders_rejects_unresolved_token() -> None:
 
 
 def test_check_legal_tag_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _patch_get(
+    captured = _patch_post(
         monkeypatch,
         lambda **_: _FakeResponse(
             status_code=200,
             headers={"correlation-id": "corr-legal-1"},
-            json_payload={"name": "opendes-open-test"},
+            json_payload={"invalidLegalTags": []},
         ),
     )
 
@@ -496,20 +496,23 @@ def test_check_legal_tag_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.error_message is None
     assert result.latency_ms >= 0.0
     assert len(captured) == 1
-    assert captured[0]["url"].endswith(
-        f"{LEGAL_TAGS_PATH}/opendes-open-test"
-    )
+    assert captured[0]["url"].endswith(LEGAL_TAG_VALIDATE_PATH)
+    assert captured[0]["json"] == {"names": ["opendes-open-test"]}
 
 
-def test_check_legal_tag_404_uses_curated_message(
+def test_check_legal_tag_invalid_tag_returns_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_get(
+    _patch_post(
         monkeypatch,
         lambda **_: _FakeResponse(
-            status_code=404,
-            headers={"correlation-id": "corr-404"},
-            json_payload={"message": "raw not found"},
+            status_code=200,
+            headers={"correlation-id": "corr-invalid"},
+            json_payload={
+                "invalidLegalTags": [
+                    {"name": "missing-tag", "reason": "not found"}
+                ]
+            },
         ),
     )
 
@@ -520,19 +523,19 @@ def test_check_legal_tag_404_uses_curated_message(
     )
 
     assert result.ok is False
-    assert result.http_status == 404
+    assert result.http_status == 200
     assert result.error_message is not None
     assert "missing-tag" in result.error_message
     assert "opendes" in result.error_message
-    assert "not found" in result.error_message.lower()
-    assert result.correlation_id == "corr-404"
+    assert "not valid" in result.error_message.lower()
+    assert result.correlation_id == "corr-invalid"
 
 
 @pytest.mark.parametrize("status_code", [401, 403, 500])
 def test_check_legal_tag_http_errors(
     monkeypatch: pytest.MonkeyPatch, status_code: int
 ) -> None:
-    _patch_get(
+    _patch_post(
         monkeypatch,
         lambda **_: _FakeResponse(
             status_code=status_code,
@@ -551,10 +554,10 @@ def test_check_legal_tag_http_errors(
 
 
 def test_check_legal_tag_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_get(**_: Any) -> Any:
+    def fake_post(**_: Any) -> Any:
         raise requests.exceptions.Timeout("read timed out")
 
-    monkeypatch.setattr(ingestion_module.requests, "get", fake_get)
+    monkeypatch.setattr(ingestion_module.requests, "post", fake_post)
 
     result = check_legal_tag(_connection(), token="t", legal_tag_name="x")
 
@@ -568,10 +571,10 @@ def test_check_legal_tag_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_check_legal_tag_connection_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_get(**_: Any) -> Any:
+    def fake_post(**_: Any) -> Any:
         raise requests.exceptions.ConnectionError("dns failure")
 
-    monkeypatch.setattr(ingestion_module.requests, "get", fake_get)
+    monkeypatch.setattr(ingestion_module.requests, "post", fake_post)
 
     result = check_legal_tag(_connection(), token="t", legal_tag_name="x")
 
@@ -584,9 +587,12 @@ def test_check_legal_tag_connection_error(
 def test_check_legal_tag_outgoing_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = _patch_get(
+    captured = _patch_post(
         monkeypatch,
-        lambda **_: _FakeResponse(status_code=200, json_payload={}),
+        lambda **_: _FakeResponse(
+            status_code=200,
+            json_payload={"invalidLegalTags": []},
+        ),
     )
 
     check_legal_tag(_connection(), token="bearer-abc", legal_tag_name="x")
@@ -595,7 +601,7 @@ def test_check_legal_tag_outgoing_headers(
     assert headers["Authorization"] == "Bearer bearer-abc"
     assert headers["data-partition-id"] == "example-opendes"
     assert headers["Accept"] == "application/json"
-    assert "Content-Type" not in headers  # GET — no body
+    assert headers["Content-Type"] == "application/json"  # POST — has body
     assert captured[0]["timeout"] == INGESTION_TIMEOUT_SECONDS
     assert captured[0]["allow_redirects"] is False
 
@@ -606,12 +612,12 @@ def test_check_legal_tag_outgoing_headers(
 def test_check_legal_tag_correlation_id_case_insensitive(
     monkeypatch: pytest.MonkeyPatch, header_name: str
 ) -> None:
-    _patch_get(
+    _patch_post(
         monkeypatch,
         lambda **_: _FakeResponse(
             status_code=200,
             headers={header_name: "corr-x"},
-            json_payload={},
+            json_payload={"invalidLegalTags": []},
         ),
     )
 
@@ -619,18 +625,22 @@ def test_check_legal_tag_correlation_id_case_insensitive(
     assert result.correlation_id == "corr-x"
 
 
-def test_check_legal_tag_url_encodes_special_chars(
+def test_check_legal_tag_sends_name_in_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = _patch_get(
+    captured = _patch_post(
         monkeypatch,
-        lambda **_: _FakeResponse(status_code=200, json_payload={}),
+        lambda **_: _FakeResponse(
+            status_code=200,
+            json_payload={"invalidLegalTags": []},
+        ),
     )
 
     weird = "a tag/with spaces+and-slash"
     check_legal_tag(_connection(), token="t", legal_tag_name=weird)
 
-    assert captured[0]["url"].endswith(f"{LEGAL_TAGS_PATH}/{quote(weird, safe='')}")
+    assert captured[0]["json"] == {"names": [weird]}
+    assert captured[0]["url"].endswith(LEGAL_TAG_VALIDATE_PATH)
 
 
 @pytest.mark.parametrize("name", ["", "   ", "\t\n"])

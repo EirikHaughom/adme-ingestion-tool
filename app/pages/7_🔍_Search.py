@@ -15,6 +15,8 @@ Notes:
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import sys
 from datetime import UTC, datetime
@@ -35,6 +37,7 @@ from app.connection_state import (  # noqa: E402
 )
 from app.models.connection import ADMEConnection, AuthMethod  # noqa: E402
 from app.models.osdu import (  # noqa: E402
+    CursorSearchResult,
     KindAggregationResult,
     RecordDetailResult,
     RecordSummary,
@@ -48,6 +51,41 @@ from app.services.search import (  # noqa: E402
     list_kinds,
     search_records,
 )
+
+try:
+    from app.services.search import (  # noqa: E402
+        export_all_records,
+        search_with_cursor,
+    )
+
+    _CURSOR_EXPORT_AVAILABLE = True
+except ImportError:
+    _CURSOR_EXPORT_AVAILABLE = False
+
+try:
+    from app.services.search import (  # noqa: E402
+        search_with_aggregation,
+        build_multi_kind_query,
+    )
+    from app.models.osdu import (  # noqa: E402
+        SearchAggregationResult,
+        AggregationBucket,
+    )
+
+    _HAS_AGGREGATION = True
+except ImportError:
+    _HAS_AGGREGATION = False
+
+try:
+    from app.services.manifest_generator import (  # noqa: E402
+        extract_schema_fields,
+        list_schema_kinds,
+        load_schema,
+    )
+
+    _HAS_FIELD_BUILDER = True
+except ImportError:
+    _HAS_FIELD_BUILDER = False
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 
@@ -69,6 +107,24 @@ SEARCH_AUTORUN_DONE_KEY = "search_autorun_done"
 # `search_query_text` key after the text_input has rendered (post-widget
 # write would raise StreamlitAPIException, mirroring the 5/11 ingestion bug).
 SEARCH_RESOLVED_QUERY_KEY = "search_resolved_query"
+
+# --- Export session-state keys (issue #25) --------------------------------
+EXPORT_STATUS_KEY = "export_status"  # "idle" | "exporting" | "done" | "error"
+EXPORT_RECORDS_KEY = "export_records"  # list[RecordSummary] accumulated
+EXPORT_FORMAT_KEY = "export_format"  # "csv" | "json"
+EXPORT_ERROR_KEY = "export_error"  # str | None
+EXPORT_ABORT_KEY = "export_abort_requested"  # bool — graceful mid-loop stop
+
+# --- Multi-kind + aggregation keys (issue #26) ----------------------------
+SEARCH_KIND_SELECTIONS_KEY = "search_kind_selections"
+SEARCH_AGGREGATE_KEY = "search_aggregate_by_kind"
+SEARCH_AGGREGATION_RESULTS_KEY = "search_aggregation_results"
+
+# --- Query builder keys (issue #27) ---------------------------------------
+QUERY_BUILDER_CLAUSES_KEY = "query_builder_clauses"
+QUERY_BUILDER_COMBINATOR_KEY = "query_builder_combinator"
+QUERY_BUILDER_KIND_KEY = "query_builder_kind"
+QUERY_BUILDER_FIELDS_KEY = "query_builder_fields"
 
 # --- Constants -----------------------------------------------------------
 SEARCH_PAGE_SIZE = 100
@@ -120,7 +176,10 @@ def main() -> None:
     _autorun_once(connection, token)
 
     _render_toolbar(connection, token)
+    _render_query_builder()
+    _render_aggregation_summary()
     _render_results_section()
+    _render_export_section(connection, token)
     _render_pagination(connection, token)
     _render_selected_record(connection, token)
     _render_history()
@@ -145,6 +204,18 @@ def _ensure_page_defaults() -> None:
     st.session_state.setdefault(SEARCH_FULL_RECORD_CACHE_KEY, {})
     st.session_state.setdefault(SEARCH_AUTORUN_DONE_KEY, False)
     st.session_state.setdefault(SEARCH_RESOLVED_QUERY_KEY, "")
+    st.session_state.setdefault(EXPORT_STATUS_KEY, "idle")
+    st.session_state.setdefault(EXPORT_RECORDS_KEY, [])
+    st.session_state.setdefault(EXPORT_FORMAT_KEY, "csv")
+    st.session_state.setdefault(EXPORT_ERROR_KEY, None)
+    st.session_state.setdefault(EXPORT_ABORT_KEY, False)
+    st.session_state.setdefault(SEARCH_KIND_SELECTIONS_KEY, [])
+    st.session_state.setdefault(SEARCH_AGGREGATE_KEY, False)
+    st.session_state.setdefault(SEARCH_AGGREGATION_RESULTS_KEY, [])
+    st.session_state.setdefault(QUERY_BUILDER_CLAUSES_KEY, [])
+    st.session_state.setdefault(QUERY_BUILDER_COMBINATOR_KEY, "AND")
+    st.session_state.setdefault(QUERY_BUILDER_KIND_KEY, "")
+    st.session_state.setdefault(QUERY_BUILDER_FIELDS_KEY, [])
 
 
 # ---------------------------------------------------------------------------
@@ -252,15 +323,19 @@ def _refresh_all(connection: ADMEConnection, token: str) -> None:
     if kind_result.ok:
         options.extend(k for k in kind_result.kinds if k != WILDCARD_KIND)
     st.session_state[SEARCH_KIND_OPTIONS_KEY] = options
-    # If the previously selected kind disappeared from the new options,
-    # snap back to the wildcard so the selectbox doesn't crash.
-    if (
-        st.session_state.get(SEARCH_KIND_FILTER_KEY) not in options
-    ):
-        st.session_state[SEARCH_KIND_FILTER_KEY] = WILDCARD_KIND
+    # Prune selections to only kinds that still exist.
+    selections = [
+        k
+        for k in st.session_state.get(SEARCH_KIND_SELECTIONS_KEY, [])
+        if k in options
+    ]
+    st.session_state[SEARCH_KIND_SELECTIONS_KEY] = selections
 
-    kind = st.session_state.get(SEARCH_KIND_FILTER_KEY, WILDCARD_KIND)
-    query = st.session_state.get(SEARCH_RESOLVED_QUERY_KEY, "")
+    kind, query = _resolve_search_params(
+        selections,
+        st.session_state.get(SEARCH_RESOLVED_QUERY_KEY, ""),
+    )
+    st.session_state[SEARCH_KIND_FILTER_KEY] = kind
     offset = st.session_state.get(SEARCH_PAGE_OFFSET_KEY, 0)
     _run_search(
         connection, token, kind=kind, query=query, offset=offset
@@ -285,21 +360,16 @@ def _render_toolbar(connection: ADMEConnection, token: str) -> None:
         kind_options = st.session_state.get(
             SEARCH_KIND_OPTIONS_KEY, [WILDCARD_KIND]
         ) or [WILDCARD_KIND]
-        # Preserve the operator's current selection if it's still valid.
-        current_kind = st.session_state.get(
-            SEARCH_KIND_FILTER_KEY, WILDCARD_KIND
+        # Wildcard is implicit (empty selection = all kinds).
+        selectable = [k for k in kind_options if k != WILDCARD_KIND]
+        selections = st.multiselect(
+            "Kind filter",
+            options=selectable,
+            key=SEARCH_KIND_SELECTIONS_KEY,
+            placeholder="All kinds (wildcard)",
+            help="Select one or more OSDU kinds. Leave empty for all.",
         )
-        if current_kind not in kind_options:
-            st.session_state[SEARCH_KIND_FILTER_KEY] = WILDCARD_KIND
-        st.selectbox(
-            "Kind",
-            options=kind_options,
-            key=SEARCH_KIND_FILTER_KEY,
-            format_func=lambda k: (
-                "All kinds (wildcard)" if k == WILDCARD_KIND else k
-            ),
-            help="Filter results to a single OSDU kind, or browse all.",
-        )
+        st.session_state[SEARCH_KIND_SELECTIONS_KEY] = selections
     with cols[2]:
         st.text_input(
             "Free-text query (Lucene syntax)",
@@ -318,6 +388,13 @@ def _render_toolbar(connection: ADMEConnection, token: str) -> None:
             type="primary",
         )
 
+    if _HAS_AGGREGATION:
+        agg_checked = st.checkbox(
+            "Aggregate by kind",
+            key=SEARCH_AGGREGATE_KEY,
+        )
+        st.session_state[SEARCH_AGGREGATE_KEY] = agg_checked
+
     st.caption(
         f"[OSDU search syntax reference]({OSDU_SEARCH_SYNTAX_DOCS_URL})"
     )
@@ -332,9 +409,6 @@ def _render_toolbar(connection: ADMEConnection, token: str) -> None:
 
     if refresh_clicked:
         st.session_state[SEARCH_PAGE_OFFSET_KEY] = 0
-        # Capture the current widget-bound query into the resolved key
-        # BEFORE we re-fetch (so the search reflects what the operator
-        # currently sees in the input).
         st.session_state[SEARCH_RESOLVED_QUERY_KEY] = (
             st.session_state.get(SEARCH_QUERY_TEXT_KEY, "") or ""
         )
@@ -347,17 +421,63 @@ def _render_toolbar(connection: ADMEConnection, token: str) -> None:
         st.session_state[SEARCH_RESOLVED_QUERY_KEY] = (
             st.session_state.get(SEARCH_QUERY_TEXT_KEY, "") or ""
         )
-        kind = st.session_state.get(
-            SEARCH_KIND_FILTER_KEY, WILDCARD_KIND
+        selections = list(
+            st.session_state.get(SEARCH_KIND_SELECTIONS_KEY, [])
         )
+        kind, query = _resolve_search_params(
+            selections, st.session_state[SEARCH_RESOLVED_QUERY_KEY]
+        )
+        st.session_state[SEARCH_KIND_FILTER_KEY] = kind
         _run_search(
             connection,
             token,
             kind=kind,
-            query=st.session_state[SEARCH_RESOLVED_QUERY_KEY],
+            query=query,
             offset=0,
         )
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Kind resolution helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_kind(selections: list[str]) -> str:
+    """Resolve multiselect selections to a single kind string for the API."""
+    if not selections:
+        return WILDCARD_KIND
+    if len(selections) == 1:
+        return selections[0]
+    return WILDCARD_KIND
+
+
+def _resolve_search_params(
+    selections: list[str], user_query: str
+) -> tuple[str, str]:
+    """Return ``(kind, query)`` incorporating multi-kind constraints.
+
+    When multiple kinds are selected and ``build_multi_kind_query`` is
+    available, kind constraints are folded into the Lucene query.
+    """
+    kind = _resolve_kind(selections)
+    if len(selections) <= 1:
+        return kind, user_query
+    if _HAS_AGGREGATION:
+        kind_q = build_multi_kind_query(selections)  # type: ignore[name-defined]
+        if user_query:
+            return kind, f"({kind_q}) AND ({user_query})"
+        return kind, kind_q
+    return kind, user_query
+
+
+def _current_search_params() -> tuple[str, str]:
+    """Return ``(kind, query)`` from current session state."""
+    selections = list(
+        st.session_state.get(SEARCH_KIND_SELECTIONS_KEY, [])
+    )
+    user_query = st.session_state.get(SEARCH_RESOLVED_QUERY_KEY, "")
+    return _resolve_search_params(selections, user_query)
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +500,30 @@ def _run_search(
     if offset + limit > MAX_OFFSET_PLUS_LIMIT:
         limit = max(1, MAX_OFFSET_PLUS_LIMIT - offset)
 
+    aggregate = bool(
+        st.session_state.get(SEARCH_AGGREGATE_KEY, False)
+        and _HAS_AGGREGATION
+    )
+
+    if aggregate:
+        with st.spinner("Aggregating…"):
+            agg_result = search_with_aggregation(  # type: ignore[name-defined]
+                connection,
+                token,
+                kind=kind,
+                query=query or None,
+                aggregate_by="kind",
+            )
+        agg_list = getattr(agg_result, "aggregations", []) or []
+        if agg_result.ok and agg_list:
+            st.session_state[SEARCH_AGGREGATION_RESULTS_KEY] = [
+                {"Kind": b.key, "Count": b.count} for b in agg_list
+            ]
+        else:
+            st.session_state[SEARCH_AGGREGATION_RESULTS_KEY] = []
+    else:
+        st.session_state[SEARCH_AGGREGATION_RESULTS_KEY] = []
+
     with st.spinner("Loading records…"):
         result = search_records(
             connection,
@@ -389,6 +533,7 @@ def _run_search(
             limit=limit,
             offset=offset,
         )
+
     _append_history_search(result)
 
     if result.ok:
@@ -415,6 +560,201 @@ def _format_search_error(result: SearchPageResult) -> str:
         detail_bits.append(f"correlation `{result.correlation_id}`")
     suffix = (" · " + " · ".join(detail_bits)) if detail_bits else ""
     return f"❌ Search failed: {msg}{suffix}"
+
+
+# ---------------------------------------------------------------------------
+# Aggregation summary (issue #26)
+# ---------------------------------------------------------------------------
+
+
+def _render_aggregation_summary() -> None:
+    """Show kind-level record counts when aggregation is active."""
+    agg = st.session_state.get(SEARCH_AGGREGATION_RESULTS_KEY, [])
+    if not agg:
+        return
+    st.markdown("📊 **Records by kind:**")
+    st.dataframe(
+        pd.DataFrame(agg),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Query builder (issue #27)
+# ---------------------------------------------------------------------------
+
+_QUERY_OPERATORS: list[str] = [
+    "contains",
+    "exact",
+    "exists",
+    "range",
+    "equals",
+]
+
+
+def _build_lucene_query(
+    clauses: list[dict[str, str]], combinator: str
+) -> str:
+    """Build a Lucene query string from clause dicts."""
+    parts: list[str] = []
+    for clause in clauses:
+        field = clause.get("field", "")
+        operator = clause.get("operator", "")
+        value = clause.get("value", "")
+        if not field:
+            continue
+        # Normalize: SchemaField.path values typically come prefixed with
+        # "data." already. Strip it so we don't end up with "data.data.X".
+        if field.startswith("data."):
+            field = field[len("data."):]
+        if operator == "contains":
+            parts.append(f"data.{field}:*{value}*")
+        elif operator == "exact":
+            parts.append(f'data.{field}.keyword:"{value}"')
+        elif operator == "exists":
+            parts.append(f"_exists_:data.{field}")
+        elif operator == "range":
+            range_parts = [v.strip() for v in value.split(",", 1)]
+            if len(range_parts) == 2:
+                parts.append(
+                    f"data.{field}:[{range_parts[0]} TO {range_parts[1]}]"
+                )
+            else:
+                parts.append(f"data.{field}:[{value} TO *]")
+        elif operator == "equals":
+            parts.append(f'data.{field}:"{value}"')
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    joined = f" {combinator} ".join(parts)
+    return f"({joined})"
+
+
+def _render_query_builder() -> None:
+    """Render the optional query-builder expander (issue #27)."""
+    if not _HAS_FIELD_BUILDER:
+        return
+
+    with st.expander("🔨 Query Builder", expanded=False):
+        _render_query_builder_inner()
+
+
+def _render_query_builder_inner() -> None:
+    """Query builder controls inside the expander."""
+    try:
+        available_kinds = list_schema_kinds()  # type: ignore[name-defined]
+    except Exception:  # noqa: BLE001
+        available_kinds = []
+
+    if not available_kinds:
+        st.caption("No vendored schemas found for field discovery.")
+        return
+
+    selected_kind = st.selectbox(
+        "Schema kind",
+        options=[""] + available_kinds,
+        key=QUERY_BUILDER_KIND_KEY,
+        format_func=lambda k: "(select a schema)" if not k else k,
+    )
+
+    # Load fields when a kind is chosen.
+    fields: list[Any] = []
+    if selected_kind:
+        try:
+            schema = load_schema(selected_kind)  # type: ignore[name-defined]
+            fields = extract_schema_fields(schema)  # type: ignore[name-defined]
+            st.session_state[QUERY_BUILDER_FIELDS_KEY] = fields
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"Could not load schema fields: {exc}")
+    if not fields:
+        fields = list(st.session_state.get(QUERY_BUILDER_FIELDS_KEY, []))
+
+    field_names = [f.path for f in fields] if fields else []
+
+    # Combinator
+    combinator: str = st.radio(
+        "Combinator",
+        options=["AND", "OR"],
+        key=QUERY_BUILDER_COMBINATOR_KEY,
+        horizontal=True,
+    )
+
+    # Current clauses
+    clauses: list[dict[str, str]] = list(
+        st.session_state.get(QUERY_BUILDER_CLAUSES_KEY, [])
+    )
+
+    # Display existing clauses with remove buttons.
+    remove_idx: int | None = None
+    for i, clause in enumerate(clauses):
+        c_cols = st.columns([3, 2, 3, 1])
+        with c_cols[0]:
+            st.text(clause.get("field", "?"))
+        with c_cols[1]:
+            st.text(clause.get("operator", "?"))
+        with c_cols[2]:
+            st.text(clause.get("value", "") or "(any)")
+        with c_cols[3]:
+            if st.button("🗑️", key=f"qb_remove_{i}"):
+                remove_idx = i
+
+    if remove_idx is not None:
+        clauses.pop(remove_idx)
+        st.session_state[QUERY_BUILDER_CLAUSES_KEY] = clauses
+        st.rerun()
+
+    # Add-clause row.
+    st.markdown("**Add clause:**")
+    a_cols = st.columns([3, 2, 3, 1])
+    with a_cols[0]:
+        new_field: str = st.selectbox(
+            "Field",
+            options=[""] + field_names,
+            key="qb_new_field",
+            label_visibility="collapsed",
+        )
+    with a_cols[1]:
+        new_op: str = st.selectbox(
+            "Operator",
+            options=_QUERY_OPERATORS,
+            key="qb_new_op",
+            label_visibility="collapsed",
+        )
+    with a_cols[2]:
+        new_val: str = st.text_input(
+            "Value",
+            key="qb_new_value",
+            label_visibility="collapsed",
+        )
+    with a_cols[3]:
+        if st.button("Add clause", key="qb_add"):
+            clauses.append(
+                {
+                    "field": new_field,
+                    "operator": new_op,
+                    "value": "" if new_op == "exists" else new_val,
+                }
+            )
+            st.session_state[QUERY_BUILDER_CLAUSES_KEY] = clauses
+            st.rerun()
+
+    # Preview + apply.
+    lucene = _build_lucene_query(clauses, combinator)
+    if lucene:
+        st.code(lucene, language=None)
+    else:
+        st.caption("Add clauses above to build a query.")
+
+    if st.button(
+        "Apply to search", key="qb_apply", disabled=not lucene
+    ):
+        st.session_state[SEARCH_QUERY_TEXT_KEY] = lucene
+        st.session_state[SEARCH_RESOLVED_QUERY_KEY] = lucene
+        st.rerun()
+
+    st.caption("_returnedFields projection picker — coming soon._")
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +842,281 @@ def _preview_source(source: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Export helpers
+# ---------------------------------------------------------------------------
+
+
+def _flatten_source(source: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Flatten a nested dict with dot-notation keys.
+
+    >>> _flatten_source({"data": {"FacilityName": "X", "Nested": {"A": 1}}})
+    {'data.FacilityName': 'X', 'data.Nested.A': 1}
+    """
+    flat: dict[str, Any] = {}
+    for key, value in source.items():
+        full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
+        if isinstance(value, dict):
+            flat.update(_flatten_source(value, full_key))
+        else:
+            flat[full_key] = value
+    return flat
+
+
+def _records_to_csv(records: list[RecordSummary]) -> str:
+    """Convert a list of RecordSummary to CSV string."""
+    if not records:
+        return ""
+
+    # Collect all data.* field names across all records.
+    all_data_keys: dict[str, None] = {}
+    rows: list[dict[str, Any]] = []
+    for rec in records:
+        flat = _flatten_source(rec.source) if rec.source else {}
+        row: dict[str, Any] = {
+            "id": rec.id,
+            "kind": rec.kind,
+            "createTime": rec.create_time or "",
+            "version": rec.version if rec.version is not None else "",
+        }
+        for k, v in flat.items():
+            all_data_keys[k] = None
+            row[k] = v
+        rows.append(row)
+
+    fieldnames = ["id", "kind", "createTime", "version"] + list(all_data_keys)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return buf.getvalue()
+
+
+def _records_to_json(records: list[RecordSummary]) -> str:
+    """Convert a list of RecordSummary to pretty-printed JSON string."""
+    return json.dumps(
+        [rec.source for rec in records],
+        indent=2,
+        default=str,
+        ensure_ascii=False,
+    )
+
+
+def _set_export_abort() -> None:
+    """``on_click`` callback — sets the graceful abort flag."""
+    st.session_state[EXPORT_ABORT_KEY] = True
+
+
+def _render_export_section(
+    connection: ADMEConnection, token: str
+) -> None:
+    """Render export buttons below the results when results are present."""
+    results: list[RecordSummary] = list(
+        st.session_state.get(SEARCH_RESULTS_KEY, [])
+    )
+    if not results:
+        return
+
+    total: int | None = st.session_state.get(SEARCH_TOTAL_COUNT_KEY)
+    is_large = total is not None and total > len(results)
+
+    # --- Done / error states from a previous export run --------------------
+    export_status = st.session_state.get(EXPORT_STATUS_KEY, "idle")
+
+    if export_status == "done":
+        accumulated: list[RecordSummary] = list(
+            st.session_state.get(EXPORT_RECORDS_KEY, [])
+        )
+        fmt = st.session_state.get(EXPORT_FORMAT_KEY, "csv")
+        if accumulated:
+            data = (
+                _records_to_csv(accumulated)
+                if fmt == "csv"
+                else _records_to_json(accumulated)
+            )
+            filename = f"search_export.{fmt}"
+            mime = "text/csv" if fmt == "csv" else "application/json"
+            st.download_button(
+                f"📥 Download {fmt.upper()} ({len(accumulated):,} records)",
+                data=data,
+                file_name=filename,
+                mime=mime,
+                key="export_download_done",
+            )
+        if st.button("Clear export", key="export_clear"):
+            st.session_state[EXPORT_STATUS_KEY] = "idle"
+            st.session_state[EXPORT_RECORDS_KEY] = []
+            st.session_state[EXPORT_ERROR_KEY] = None
+            st.session_state[EXPORT_ABORT_KEY] = False
+            st.rerun()
+        return
+
+    if export_status == "error":
+        err_msg = st.session_state.get(EXPORT_ERROR_KEY) or "Unknown error."
+        accumulated = list(st.session_state.get(EXPORT_RECORDS_KEY, []))
+        st.error(err_msg)
+        if accumulated:
+            fmt = st.session_state.get(EXPORT_FORMAT_KEY, "csv")
+            data = (
+                _records_to_csv(accumulated)
+                if fmt == "csv"
+                else _records_to_json(accumulated)
+            )
+            filename = f"search_export_partial.{fmt}"
+            mime = "text/csv" if fmt == "csv" else "application/json"
+            st.download_button(
+                f"📥 Download partial {fmt.upper()} ({len(accumulated):,} records)",
+                data=data,
+                file_name=filename,
+                mime=mime,
+                key="export_download_partial",
+            )
+        if st.button("Clear export", key="export_clear_error"):
+            st.session_state[EXPORT_STATUS_KEY] = "idle"
+            st.session_state[EXPORT_RECORDS_KEY] = []
+            st.session_state[EXPORT_ERROR_KEY] = None
+            st.session_state[EXPORT_ABORT_KEY] = False
+            st.rerun()
+        return
+
+    # --- Small result set: direct download from current page ---------------
+    if not is_large:
+        cols = st.columns([1, 1, 6])
+        with cols[0]:
+            csv_data = _records_to_csv(results)
+            st.download_button(
+                "📥 Export CSV",
+                data=csv_data,
+                file_name="search_export.csv",
+                mime="text/csv",
+                key="export_csv_small",
+            )
+        with cols[1]:
+            json_data = _records_to_json(results)
+            st.download_button(
+                "📥 Export JSON",
+                data=json_data,
+                file_name="search_export.json",
+                mime="application/json",
+                key="export_json_small",
+            )
+        return
+
+    # --- Large result set: cursor export required --------------------------
+    if not _CURSOR_EXPORT_AVAILABLE:
+        st.caption(
+            "Export for large result sets is not yet available "
+            "(cursor pagination pending)."
+        )
+        return
+
+    assert total is not None  # mypy — is_large guarantees total > len
+    st.caption(
+        f"Export will fetch all {total:,} records using cursor pagination."
+    )
+    if total > 10_000:
+        st.warning("Large export — this may take a while.")
+
+    cols = st.columns([1, 1, 6])
+    with cols[0]:
+        csv_clicked = st.button(
+            "📥 Export CSV",
+            key="export_csv_large",
+        )
+    with cols[1]:
+        json_clicked = st.button(
+            "📥 Export JSON",
+            key="export_json_large",
+        )
+
+    if csv_clicked or json_clicked:
+        fmt = "csv" if csv_clicked else "json"
+        st.session_state[EXPORT_FORMAT_KEY] = fmt
+        st.session_state[EXPORT_ABORT_KEY] = False
+        _run_cursor_export(connection, token, fmt)
+        st.rerun()
+
+
+def _run_cursor_export(
+    connection: ADMEConnection,
+    token: str,
+    fmt: str,
+) -> None:
+    """Walk the full result set via cursor pagination and store results."""
+    kind, query_str = _current_search_params()
+    query = query_str or None
+
+    st.session_state[EXPORT_STATUS_KEY] = "exporting"
+    st.session_state[EXPORT_RECORDS_KEY] = []
+    st.session_state[EXPORT_ERROR_KEY] = None
+
+    accumulated: list[RecordSummary] = []
+    total_count: int | None = None
+
+    st.button(
+        "⏹️ Abort export",
+        key="export_abort_btn",
+        on_click=_set_export_abort,
+        help="Stop after the current page finishes.",
+    )
+    progress_bar = st.progress(0.0, text="Exporting records…")
+
+    try:
+        iterator = export_all_records(  # type: ignore[name-defined]
+            connection,
+            token,
+            kind=kind,
+            query=query,
+        )
+        for page in iterator:
+            if not page.ok:
+                n = len(accumulated)
+                st.session_state[EXPORT_STATUS_KEY] = "error"
+                st.session_state[EXPORT_RECORDS_KEY] = accumulated
+                st.session_state[EXPORT_ERROR_KEY] = (
+                    f"Export failed after {n:,} records. "
+                    f"Error: {page.error_message or 'Unknown error.'}"
+                )
+                return
+
+            accumulated.extend(page.records)
+            if total_count is None and page.total_count is not None:
+                total_count = page.total_count
+
+            if total_count and total_count > 0:
+                progress = min(len(accumulated) / total_count, 1.0)
+                progress_bar.progress(
+                    progress,
+                    text=f"Exported {len(accumulated):,} of {total_count:,}…",
+                )
+
+            st.session_state[EXPORT_RECORDS_KEY] = list(accumulated)
+
+            if st.session_state.get(EXPORT_ABORT_KEY):
+                st.session_state[EXPORT_STATUS_KEY] = "done"
+                st.warning(
+                    f"⏹️ Export aborted after {len(accumulated):,} records."
+                )
+                return
+
+            if not page.has_more:
+                break
+
+    except Exception as exc:  # noqa: BLE001 - operator-safe summary
+        n = len(accumulated)
+        st.session_state[EXPORT_STATUS_KEY] = "error"
+        st.session_state[EXPORT_RECORDS_KEY] = accumulated
+        st.session_state[EXPORT_ERROR_KEY] = (
+            f"Export failed after {n:,} records. "
+            f"Error: {type(exc).__name__}: {exc}"
+        )
+        return
+
+    st.session_state[EXPORT_STATUS_KEY] = "done"
+    st.session_state[EXPORT_RECORDS_KEY] = accumulated
+
+
+# ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
 
@@ -548,10 +1163,7 @@ def _render_pagination(connection: ADMEConnection, token: str) -> None:
 
     if prev_clicked:
         new_offset = max(0, offset - SEARCH_PAGE_SIZE)
-        kind = st.session_state.get(
-            SEARCH_KIND_FILTER_KEY, WILDCARD_KIND
-        )
-        query = st.session_state.get(SEARCH_RESOLVED_QUERY_KEY, "")
+        kind, query = _current_search_params()
         st.session_state[SEARCH_SELECTED_RECORD_ID_KEY] = None
         _run_search(
             connection, token, kind=kind, query=query, offset=new_offset
@@ -560,10 +1172,7 @@ def _render_pagination(connection: ADMEConnection, token: str) -> None:
 
     if next_clicked:
         new_offset = next_offset
-        kind = st.session_state.get(
-            SEARCH_KIND_FILTER_KEY, WILDCARD_KIND
-        )
-        query = st.session_state.get(SEARCH_RESOLVED_QUERY_KEY, "")
+        kind, query = _current_search_params()
         st.session_state[SEARCH_SELECTED_RECORD_ID_KEY] = None
         _run_search(
             connection, token, kind=kind, query=query, offset=new_offset

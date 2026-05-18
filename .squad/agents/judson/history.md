@@ -195,3 +195,40 @@ change required.
 - PR #9 obscures hydration; error handling implicit
 
 **Recommendation:** STICK WITH LOCAL; close PR #9 as superseded.
+- Satya produced the bulk-load architecture decision (sync, premium): dataset
+  registry pattern, `app/data/datasets/{key}/` layout, sequential submit with
+  stop-on-first-failure, page placement under Operate.
+- Kevin implemented `app/services/bulk_loader.py` + 4 new dataclasses in
+  `app/models/osdu.py`, migrated TNO + added Volve `dataset.json`,
+  restructured `app/data/tno/` -> `app/data/osdu/` + `app/data/datasets/tno/`,
+  12 service tests. All gates green.
+- Judson shipped `app/pages/9_📥_Bulk_Load.py`, wired `app/main.py` nav,
+  added `N999` ignore in `pyproject.toml`, 9 page tests. All gates green.
+- Coordinator branch-untangled RunHistory + TNOVendor work into separate
+  clean commits, opened PRs #13, #14, #15 against
+  `EirikHaughom/adme-ingestion-tool`.
+
+### 2026-05-15T10:52:00Z — Issue #17 (CSV gen tab) + Issue #31 (abort button)
+- Completed the Generate from CSV tab in `app/pages/9_📥_Bulk_Load.py` (issue #17).
+  Tab was partially built — added JSON sample preview (`st.expander` + `st.json`) before
+  the submit button so operators see manifest shape before committing.
+- Implemented mid-loop abort button for both submit loops (issue #31). Two separate
+  session-state keys: `BULK_ABORT_KEY = "bulk_abort_requested"` (registered datasets)
+  and `GEN_ABORT_KEY = "gen_abort_requested"` (CSV generation). Each submit loop renders
+  an `st.button("⏹️ Abort")` with an `on_click` callback that sets the flag. The loop
+  checks the flag after each iteration and breaks gracefully (finishes current HTTP call,
+  skips remaining). Both `_render_results_section` and `_render_gen_results_section` show
+  "Aborted after N of M" when the abort flag is True and results are partial.
+- Key Streamlit pattern: do NOT reset the abort flag at the start of `_run_submit` /
+  `_run_gen_submit`. The flag is managed by `on_click` callbacks, which run before the
+  script body on the next rerun. Resetting the flag would defeat test-harness simulation
+  of mid-loop abort. Instead, the flag persists until the callback resets it naturally
+  on the next submit click.
+- Fixed `StreamlitRecorder.selectbox` to honour `session_state[key]` when a key kwarg is
+  provided — mirrors real Streamlit's widget-key binding. Without this, CSV tab tests
+  couldn't drive the kind selectbox past the "" placeholder.
+- Fixed `fake_list_schema_kinds` test helper: `kinds or _SAMPLE_KINDS` silently returned
+  defaults for `kinds=[]` (falsy). Changed to `kinds if kinds is not None else _SAMPLE_KINDS`.
+- Stored intermediate results in session state after each iteration (`st.session_state[KEY] = list(results)`)
+  so Streamlit reruns triggered by abort show partial progress.
+- All 43 bulk load page tests pass.

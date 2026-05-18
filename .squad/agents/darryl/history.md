@@ -98,6 +98,37 @@ from my charter.
   MVP pre-flights all three; v2 may auto-create.
 - **Cross-references:** OSDU community Manifest Ingestion DAG project
   (https://community.opengroup.org/osdu/platform/data-flow/ingestion/ingestion-dags)
+
+### 2026-05-13: TNO CSV structure and OSDU mapping conventions documented
+
+- **Deliverable:** `.squad/decisions/inbox/darryl-osdu-mapping-conventions.md` — full
+  mapping guide for Kevin's heuristic mapper.
+- **Sample CSVs created:** `app/data/datasets/tno/csv/{organisations,wells,wellbores}.csv`
+  with realistic TNO Netherlands data (BUR-GT-01, CAL-GT-01, BRD-01, GRO-01).
+- **Key findings from schema analysis:**
+  - All `data.*` fields are technically optional in JSON Schema; only `kind`, `acl`,
+    `legal` are in the `required` array. But the ingestion DAG needs `id`,
+    `FacilityName`, `Source` at minimum for master-data.
+  - Master-data schemas compose via `allOf` from `AbstractCommonResources`,
+    `AbstractMaster`, `AbstractFacility`, plus entity-specific `IndividualProperties`.
+    The mapper MUST walk all `allOf` branches to resolve field names.
+  - Array fields use numbered-suffix convention in CSV: `aliasname_1`, `aliasname_2`, etc.
+    Detection heuristic: regex `^(.+)_([1-9]\d*)$` on column headers.
+  - CSV headers are lowercased template parameter names, NOT exact OSDU PascalCase
+    property names. `map_csv_column_names_to_parameters()` lowercases both sides.
+  - Type coercion uses `int()`, `float()`, `bool()`, `datetime_YYYY-MM-DD()` wrappers
+    in the JSON template. Mapper should infer from schema `type`/`format`.
+  - Relationship fields (`x-osdu-relationship` annotation) need full OSDU ID construction:
+    `{partition}:{group}--{EntityType}:{value}:`.
+  - Namespace placeholder `<namespace>:` is replaced at generation time via
+    `--schema-ns-value` flag.
+- **Upstream source:** Azure/osdu-data-load-tno (C# rewrite, main branch). CSV data
+  originates from OSDU open-test-data GitLab archive `rc--3.0.0/1-data/3-provided/TNO/`.
+  Mapping configs: `tno_well_data_template_mapping.json`,
+  `tno_wellbore_data_template_mapping.json`, `tno_misc_master_data_template_mapping.json`.
+- **Loading order confirmed:** ReferenceData → MiscMasterData → Wells → Wellbores →
+  WorkProducts. Batch size configurable (default 25 for master-data, via Storage API
+  `PUT /api/storage/v2/records` with batch ≤500).
   confirms `Osdu_ingest` is the R3 DAG that consumes this envelope.
 - **Decision doc:** `.squad/decisions/inbox/darryl-tno-sample-manifest.md`.
 
@@ -194,4 +225,56 @@ from my charter.
   pre-flight from `GET /legaltags/{name}` to `POST :validate` (strictly
   more correct).
 - **Decision doc:** `.squad/decisions/inbox/darryl-legal-tags-api.md`.
+
+### 2026-05-13: TNO master-data vendoring assessment and plan
+
+- **Manifest envelope:** Master-data uses `"MasterData"` array in
+  `Manifest:1.0.0` (vs `"ReferenceData"` for ref-data). The
+  `_TIER_TO_SECTION` dict in `bulk_loader.py` already maps
+  `"master-data" → "MasterData"` — zero code changes needed for the
+  section lookup.
+- **Target entities (minimum viable):** Organisation
+  (`osdu:wks:master-data--Organisation:1.0.0`), Well
+  (`osdu:wks:master-data--Well:1.0.0`), Wellbore
+  (`osdu:wks:master-data--Wellbore:1.0.0`).
+- **Schema analysis from vendored schemas:**
+  - Well: extends AbstractFacility. Key fields: `FacilityName`,
+    `FacilityOperator` (→ Organisation SRN), `SpatialLocation`,
+    `VerticalMeasurements`, `DefaultVerticalMeasurementID`,
+    `DefaultVerticalCRSID` (→ CoordinateReferenceSystem ref-data),
+    `InterestTypeID` (→ WellInterestType ref-data). Required top-level:
+    `kind`, `acl`, `legal`.
+  - Wellbore: extends AbstractFacility. Key fields: `WellID`
+    (→ Well SRN, **hard dependency**), `SequenceNumber`,
+    `TrajectoryTypeID` (→ WellboreTrajectoryType ref-data),
+    `DefinitiveTrajectoryID` (→ WPC WellboreTrajectory, future),
+    `DrillingReasons`, `TargetFormation`, `PrimaryMaterialID`
+    (→ MaterialType ref-data).
+  - Organisation: minimal — `OrganisationName`, `OrganisationID`,
+    `OrganisationDescription`. No master-data FK deps. References
+    `OrganisationType` ref-data (not in current 13 vendored ref-data
+    manifests — may need adding).
+- **Load order within MasterData array:** Organisation → Well → Wellbore.
+  The OSDU spec explicitly states dependent items must appear AFTER
+  their targets within the array.
+- **`csv_to_json.py` assessment:** Template-driven CSV → manifest
+  generator. Reads `{{parameter}}` tokens from JSON templates, maps to
+  CSV column headers, produces per-row records. Supports type coercion
+  (`int()`, `float()`, `bool()`, `datetime_*`), nested array parameters,
+  schema validation, ACL/legal injection. **NOT needed at runtime** —
+  pre-built manifests are the path for v2. Useful as offline tooling if
+  regeneration from updated CSVs is ever needed.
+- **ACL/legal handling:** Same as reference-data — manifests ship with
+  empty `acl.owners`, `acl.viewers`, `legal.legaltags` arrays;
+  `_inject_acl_and_legal()` in `bulk_loader.py` fills them at submit
+  time. No code change needed.
+- **`dataset.json` change:** Flip `master-data.enabled` to `true`, add
+  `manifest_glob` pointing at `../../osdu/rc--3.0.0/master-data/load_*.json`.
+- **Volve pattern:** Same structure, much smaller (~1 well, ~20
+  wellbores, 1 org). Single combined manifest. Goes under
+  `app/data/datasets/volve/master-data/`.
+- **Open risk:** Need to confirm upstream `v0.27.0` ships pre-built
+  master-data manifests vs CSV-only. If CSV-only, run `csv_to_json.py`
+  offline once and commit output.
+- **Decision doc:** `.squad/decisions/inbox/darryl-tno-master-data-plan.md`.
 

@@ -86,7 +86,7 @@ class WorkflowRunResult:
 
 @dataclass(frozen=True)
 class LegalTagCheckResult:
-    """Outcome of a single ``GET /api/legal/v1/legaltags/{name}`` probe."""
+    """Outcome of a ``POST /api/legal/v1/legaltags:validate`` pre-flight check."""
 
     name: str
     ok: bool
@@ -166,11 +166,58 @@ class KindAggregationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CursorSearchResult:
+    """Outcome of one cursor-based search page."""
+
+    kind: str
+    query: str | None = None
+    cursor: str | None = None
+    limit: int = 0
+    records: list[RecordSummary] = field(default_factory=list)
+    total_count: int | None = None
+    has_more: bool = False
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RecordDetailResult:
     """Outcome of ``GET /api/storage/v2/records/{id}``."""
 
     record_id: str
     record: dict | None = None
+    ok: bool = False
+    http_status: int | None = None
+    latency_ms: float = 0.0
+    correlation_id: str | None = None
+    error_message: str | None = None
+    raw_response: dict | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AggregationBucket:
+    """Single aggregation bucket from Search v2."""
+
+    key: str
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SearchAggregationResult:
+    """Search result with optional aggregation buckets."""
+
+    kind: str
+    query: str | None = None
+    offset: int = 0
+    limit: int = 0
+    records: list[RecordSummary] = field(default_factory=list)
+    total_count: int | None = None
+    has_more: bool = False
+    aggregations: list[AggregationBucket] = field(default_factory=list)
     ok: bool = False
     http_status: int | None = None
     latency_ms: float = 0.0
@@ -410,3 +457,37 @@ class UploadRow:
     file_source: str
     size_bytes: int | None
     data_partition_id: str
+
+
+# ---------------------------------------------------------------------------
+# Manifest generator types (contract: satya-manifest-generator-contract.md)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaField:
+    """One mappable leaf field extracted from an OSDU schema."""
+
+    path: str
+    field_type: str
+    required: bool
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class FieldMapping:
+    """One CSV-column-to-schema-field binding."""
+
+    csv_header: str
+    schema_path: str
+    transform: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class MappingResult:
+    """Output of auto_map: matched pairs + leftovers."""
+
+    mappings: list[FieldMapping]
+    unmatched_csv: list[str]
+    unmatched_required: list[str]
+    confidence: float
