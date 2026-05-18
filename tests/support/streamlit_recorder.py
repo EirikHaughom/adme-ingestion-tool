@@ -1,4 +1,35 @@
-"""Test doubles for Streamlit page assertions."""
+"""Test doubles for Streamlit page assertions.
+
+Extensions added for the ingestion page (``app/pages/4_📥_Ingestion.py``):
+
+- ``columns(spec)`` returns a list of ``StreamlitContext`` instances so the
+  page can do ``cols = st.columns(3); with cols[0]: ...``.  The page uses
+  ``st.columns`` to render the legal-tag/ACL input row and the run-status
+  metric row.
+- ``status(label, expanded=...)`` returns a :class:`StreamlitStatusContext`
+  that behaves as a context manager AND exposes ``update(label=, state=)``
+  so the page's ``status_box.update(...)`` calls inside ``with status_box:``
+  blocks are recorded.
+
+Extensions added for the legal tags page (``app/pages/3_🏷️_Legal_Tags.py``):
+
+- ``toggle(label, value=False, ...)`` returns the configured widget value
+  (or ``value`` default) so the "Show only valid tags" toggle's bool flow
+  is observable.
+- ``selectbox(label, options, index=0, ...)`` returns the configured widget
+  value or ``options[index]``; used both for the table-row selection and the
+  create-form classification dropdowns.
+- ``multiselect(label, options, default=None, ...)`` returns the configured
+  widget value (list) or ``default``; used for country dropdowns.
+- ``date_input(label, value=None, ...)`` returns the configured widget value
+  or ``value``; used for the create-form expiration field.
+- ``text_area(label, value="", ...)`` returns the configured widget value or
+  ``value``; used for the description fields.
+
+All five lookups consult ``self.widget_values[label]`` first, then fall back
+to the page's supplied default. Existing tests keep working — these are
+additive on top of the ``__getattr__`` no-op fallback.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +73,78 @@ class StreamlitContext:
         return False
 
 
+class StreamlitStatusContext(StreamlitContext):
+    """``st.status`` context manager with a recorded ``.update(...)``.
+
+    The ingestion page's ``status_box.update(label=..., state=...)`` calls
+    inside ``with status_box:`` get appended to the recorder under the
+    name ``status_update`` AND tracked on the instance so a single test
+    can assert "the final state was 'error'".
+    """
+
+    def __init__(
+        self,
+        recorder: StreamlitRecorder,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        super().__init__(recorder, "status", args, kwargs)
+        self.updates: list[dict[str, Any]] = []
+
+    def update(self, **kwargs: Any) -> None:
+        """Record a status update without altering recorder semantics."""
+        self.updates.append(kwargs)
+        self._recorder.calls.append(
+            StreamlitCall(name="status_update", args=(), kwargs=kwargs)
+        )
+
+
+class StreamlitPageMock:
+    """Stand-in for the object returned by ``st.Page``.
+
+    Holds the page target and metadata.  ``run()`` invokes the target when
+    it's a callable (the home page in ``app.main``); path-based pages are
+    not executed here because page tests load those scripts directly.
+    """
+
+    def __init__(self, page: Any, kwargs: dict[str, Any]) -> None:
+        self.page = page
+        self.kwargs = kwargs
+        self.title = kwargs.get("title")
+        self.icon = kwargs.get("icon")
+        self.default = bool(kwargs.get("default", False))
+
+    def run(self) -> None:
+        if callable(self.page):
+            self.page()
+
+
+class StreamlitNavigationMock:
+    """Stand-in for the object returned by ``st.navigation``.
+
+    ``run()`` invokes the default page (or first available) so ``main()``
+    tests still observe the home content's recorded calls.
+    """
+
+    def __init__(self, recorder: StreamlitRecorder, pages: Any) -> None:
+        self._recorder = recorder
+        self.pages = pages
+        if isinstance(pages, dict):
+            self.flat_pages: list[StreamlitPageMock] = [
+                p for plist in pages.values() for p in plist
+            ]
+        else:
+            self.flat_pages = list(pages)
+
+    def run(self) -> None:
+        for page in self.flat_pages:
+            if isinstance(page, StreamlitPageMock) and page.default:
+                page.run()
+                return
+        if self.flat_pages and isinstance(self.flat_pages[0], StreamlitPageMock):
+            self.flat_pages[0].run()
+
+
 class QueryParamsRecorder(dict[str, object]):
     """Record query-param clearing while behaving like Streamlit query params."""
 
@@ -78,6 +181,27 @@ class StreamlitRecorder(ModuleType):
     def expander(self, label: str, **kwargs: Any) -> StreamlitContext:
         """Return a context manager for a Streamlit expander."""
         return StreamlitContext(self, "expander", (label,), kwargs)
+
+    def columns(self, spec: int | list[int], **kwargs: Any) -> list[StreamlitContext]:
+        """Return ``N`` context managers for ``with cols[i]:`` blocks.
+
+        ``spec`` may be an int column count or a list of relative widths.
+        Each returned context records its own ``column`` call when entered
+        so we can still assert "the page rendered three columns" without
+        coupling tests to the underlying widget order.
+        """
+        count = spec if isinstance(spec, int) else len(spec)
+        self.calls.append(
+            StreamlitCall(name="columns", args=(spec,), kwargs=kwargs)
+        )
+        return [
+            StreamlitContext(self, "column", (index,), {})
+            for index in range(count)
+        ]
+
+    def status(self, label: str, **kwargs: Any) -> StreamlitStatusContext:
+        """Return a context manager that also exposes ``.update(...)``."""
+        return StreamlitStatusContext(self, (label,), kwargs)
 
     def text_input(self, label: str, value: str = "", **kwargs: Any) -> str:
         """Record a text input and return the configured widget value."""
@@ -133,6 +257,119 @@ class StreamlitRecorder(ModuleType):
         if kwargs.get("disabled"):
             return False
         return self.button_responses.get(label, False)
+
+    def toggle(
+        self, label: str, value: bool = False, **kwargs: Any
+    ) -> bool:
+        """Record a toggle and return the configured widget value (bool)."""
+        self.calls.append(
+            StreamlitCall(
+                name="toggle",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return bool(self.widget_values.get(label, value))
+
+    def selectbox(
+        self,
+        label: str,
+        options: list[Any],
+        index: int = 0,
+        **kwargs: Any,
+    ) -> Any:
+        """Record a selectbox and return the configured value or options[index]."""
+        self.calls.append(
+            StreamlitCall(
+                name="selectbox",
+                args=(label, options),
+                kwargs={"index": index, **kwargs},
+            )
+        )
+        if label in self.widget_values:
+            return self.widget_values[label]
+        if not options:
+            return None
+        try:
+            return options[index]
+        except (IndexError, TypeError):
+            return options[0] if options else None
+
+    def multiselect(
+        self,
+        label: str,
+        options: list[Any],
+        default: list[Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
+        """Record a multiselect and return the configured value (list)."""
+        self.calls.append(
+            StreamlitCall(
+                name="multiselect",
+                args=(label, options),
+                kwargs={"default": default, **kwargs},
+            )
+        )
+        if label in self.widget_values:
+            return list(self.widget_values[label])
+        return list(default) if default else []
+
+    def date_input(
+        self, label: str, value: Any = None, **kwargs: Any
+    ) -> Any:
+        """Record a date_input and return the configured value or default."""
+        self.calls.append(
+            StreamlitCall(
+                name="date_input",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return self.widget_values.get(label, value)
+
+    def text_area(
+        self, label: str, value: str = "", **kwargs: Any
+    ) -> str:
+        """Record a text_area and return the configured value or default."""
+        self.calls.append(
+            StreamlitCall(
+                name="text_area",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return str(self.widget_values.get(label, value))
+
+    def Page(  # noqa: N802 (mirrors Streamlit's actual public name)
+        self, page: Any, **kwargs: Any
+    ) -> StreamlitPageMock:
+        """Record an ``st.Page`` registration and return a runnable mock.
+
+        The mock stores the page target (callable or path string) along with
+        any ``title``/``icon``/``default`` kwargs so ``st.navigation(...).run()``
+        can invoke the home page's callable during ``app.main.main()`` tests.
+        """
+        self.calls.append(
+            StreamlitCall(name="Page", args=(page,), kwargs=kwargs)
+        )
+        return StreamlitPageMock(page, kwargs)
+
+    def navigation(
+        self,
+        pages: Any,
+        **kwargs: Any,
+    ) -> StreamlitNavigationMock:
+        """Record an ``st.navigation`` call and return a mock with ``.run()``.
+
+        ``run()`` invokes the page marked ``default=True`` (or the first
+        registered page) when its target is a callable; path-based pages are
+        no-ops here because page-level tests load those scripts directly via
+        ``importlib.util.spec_from_file_location``.
+        """
+        self.calls.append(
+            StreamlitCall(name="navigation", args=(pages,), kwargs=kwargs)
+        )
+        return StreamlitNavigationMock(self, pages)
 
     def __getattr__(self, name: str) -> Callable[..., None]:
         """Return a recorder for any accessed Streamlit API function."""

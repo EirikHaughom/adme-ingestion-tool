@@ -34,7 +34,7 @@ from app.services.token_utils import (  # noqa: E402
     extract_object_id,
 )
 
-SETTINGS_PAGE_PATH = "pages/1_⚙️_Settings.py"
+SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 
 HISTORY_KEY = "entitlements_history"
 AUTORUN_KEY = "entitlements_autorun_done"
@@ -90,7 +90,7 @@ def main() -> None:
                 st.error(_missing_member_id_message(connection))
                 st.page_link(
                     SETTINGS_PAGE_PATH,
-                    label="Open Settings",
+                    label="Open Instance Configuration",
                     icon="⚙️",
                 )
                 st.session_state[AUTORUN_KEY] = True
@@ -123,12 +123,12 @@ def _preflight_ok(connection: ADMEConnection | None) -> bool:
     if connection is None or not connection.is_valid():
         st.info(
             "No ADME connection is configured for this session. "
-            "Open Settings to add your endpoint, identity details, and "
+            "Open Instance Configuration to add your endpoint, identity details, and "
             "data partition."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return False
@@ -137,11 +137,11 @@ def _preflight_ok(connection: ADMEConnection | None) -> bool:
         if get_user_auth_state(st.session_state) is None:
             st.info(
                 "No token available for this session. Sign in on the "
-                "Settings page to enable the entitlements smoke test."
+                "Instance Configuration page to enable the entitlements smoke test."
             )
             st.page_link(
                 SETTINGS_PAGE_PATH,
-                label="Open Settings",
+                label="Open Instance Configuration",
                 icon="⚙️",
             )
             return False
@@ -160,22 +160,22 @@ def _acquire_token(connection: ADMEConnection) -> str | None:
     except AuthenticationError as exc:
         st.error(
             f"Could not acquire an ADME token: {exc}. "
-            "Open Settings to sign in again or update credentials."
+            "Open Instance Configuration to sign in again or update credentials."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return None
     except Exception as exc:  # noqa: BLE001 - never expose raw auth library details
         st.error(
             f"Unexpected error acquiring an ADME token: {type(exc).__name__}. "
-            "Open Settings to verify your connection."
+            "Open Instance Configuration to verify your connection."
         )
         st.page_link(
             SETTINGS_PAGE_PATH,
-            label="Open Settings",
+            label="Open Instance Configuration",
             icon="⚙️",
         )
         return None
@@ -196,12 +196,12 @@ def _missing_member_id_message(connection: ADMEConnection) -> str:
     if connection.auth_method == AuthMethod.SERVICE_PRINCIPAL:
         return (
             "Could not determine the service-principal member identifier from "
-            "the access token or saved client ID. Open Settings to verify the "
-            "service-principal configuration."
+            "the access token or saved client ID. Open Instance Configuration "
+            "to verify the service-principal configuration."
         )
     return (
         "Could not read your Object ID from the access token. Sign out and "
-        "sign back in on the Settings page."
+        "sign back in on the Instance Configuration page."
     )
 
 

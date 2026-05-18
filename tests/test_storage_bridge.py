@@ -25,7 +25,7 @@ SETTINGS_PAGE_PATH = (
     Path(__file__).resolve().parents[1]
     / "app"
     / "pages"
-    / "1_⚙️_Settings.py"
+    / "1_⚙️_Instance_Configuration.py"
 )
 
 

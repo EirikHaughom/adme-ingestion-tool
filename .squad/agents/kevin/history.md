@@ -152,6 +152,31 @@ Final outcome: Full test suite passed (70), Ruff clean, mypy clean. Ready for me
 - `object_id` validation matches the existing `token` empty-check pattern: ValueError on empty/whitespace before any HTTP work. `fetch_groups` and `GROUPS_PATH` untouched.
 - Tests and page rewire deliberately not touched — Charlie and Judson own those. ruff/mypy clean on both edited files.
 
+## Learnings
+
+### 2026-05-06: Ingestion MVP services landed
+- Shipped three new modules per Satya's locked contract:
+  - `app/models/osdu.py` (104 LOC): `WorkflowStatus` StrEnum, `parse_workflow_status` (case-insensitive, whitespace-trimmed; running/in progress/in_progress/submitted/queued -> IN_PROGRESS, finished/success/succeeded/completed -> FINISHED, failed/error -> FAILED, else UNKNOWN), and frozen dataclasses `WorkflowRunResult`, `LegalTagCheckResult`, `SearchResult`.
+  - `app/services/ingestion.py` (~560 LOC): constants `LEGAL_TAGS_PATH`, `WORKFLOW_INGEST_RUN_PATH`, `WORKFLOW_RUN_STATUS_PATH_TEMPLATE`, `TNO_SAMPLE_MANIFEST` (Darryl's payload, placeholders preserved verbatim), `TNO_SAMPLE_DESCRIPTION`. Public functions: `substitute_manifest_placeholders` (pure; ValueError on blank inputs OR unresolved `{{...}}` after substitution), `validate_manifest_json` (pure; first-failure-wins rule chain), `check_legal_tag`, `submit_manifest`, `get_workflow_status`. Curated 404 message on legal tag check; `submit_manifest` 2xx-without-runId is surfaced as ok=False with a curated message. Internal `_call` shared by `_call_workflow`/`_call_legal` to keep the entitlements-pattern parity without importing across services.
+  - `app/services/verification.py` (~250 LOC): `SEARCH_QUERY_PATH`, `DEFAULT_SEARCH_LIMIT=100`, `search_records_by_kind` POSTing exactly `{"kind": kind, "limit": limit, "offset": 0}`. Records list filtered to dict items only (defensive, mirrors entitlements `_extract_groups`). `totalCount` preferred over `len(results)`; falls back when missing.
+- All three modules duplicate the entitlements helpers (`_elapsed_ms`, `_extract_correlation_id`, `_try_parse_json`, `_error_message_from_json`, `_truncate`) verbatim per Satya's "no shared module yet" call - refactor is a v2 follow-up.
+- 5s timeout, `allow_redirects=False`, Bearer + data-partition-id + Accept JSON headers, Content-Type only on POST. ValueError on invalid connection / blank token / blank function-specific args. Transport failures (Timeout / RequestException / broad Exception) return ok=False with http_status=None and never raise.
+- Quality gates green: ruff clean, mypy strict (disallow_untyped_defs) clean, round-trip sanity check (substitute -> validate on TNO sample) returns True.
+- Did NOT modify entitlements.py or any of Judson's files. Did NOT touch `app/pages/3_??_Ingestion.py`.
+
+### 2026-05-07: Legal tags service module landed
+- Shipped `app/services/legal_tags.py` (~720 LOC) with all six public functions per Satya's locked contract: list/get/create/update/delete/get_legal_tag_properties. Internal `_call_legal` duplicates entitlements/ingestion HTTP wrapper verbatim (5s timeout, allow_redirects=False, Bearer + data-partition-id + Accept JSON, Content-Type only on POST/PUT). Did NOT extract shared `_http.py` — Satya's "duplication acceptable for v1" rule applied.
+- Extended `app/models/osdu.py` with five new frozen+slots dataclasses: LegalTag, LegalTagPropertiesSpec, LegalTagListResult, LegalTagDetailResult, LegalTagOperationResult, LegalTagPropertiesResult. All result envelopes carry the standard ok/http_status/latency_ms/correlation_id/error_message/raw_response fields per Satya section 2.
+- Refactored `app/services/ingestion.py`: `LEGAL_TAGS_PATH` now imported from `app.services.legal_tags` and re-exported via `__all__`. Identity check confirms `app.services.ingestion.LEGAL_TAGS_PATH is app.services.legal_tags.LEGAL_TAGS_PATH` — single source of truth wired.
+- Three Satya-vs-Darryl divergences resolved per Darryl's verified-from-controller research, documented in `.squad/decisions/inbox/kevin-legal-tags-impl-notes.md`:
+  (1) Properties path is `:properties` colon-form, not `/properties` slash-form.
+  (2) Properties response: countries are dicts (alpha-2 -> name), exports use `exportClassificationControlNumbers` not `exportClassifications`. Parser accepts BOTH shapes; dicts surface as sorted keys.
+  (3) Update body: kept Satya's nested `{name, description, properties}` shape (NOT Darryl's flat shape) because the page is being built against it in parallel; flagged 400-risk for Charlie to verify against a real cluster.
+- LEGAL_TAG_VALIDATE_PATH constant exported but no validate function shipped (out of scope for this batch).
+- delete_legal_tag returns curated 404 message matching ingestion's check_legal_tag pattern. get_legal_tag_properties returns spec=None + ok=False on 404 so the page can detect the fallback branch.
+- create_legal_tag validates the seven required properties keys (countryOfOrigin/contractId/originator/dataType/securityClassification/personalData/exportClassification) before any HTTP work.
+- Quality gates green: ruff clean, mypy strict clean, pytest -q tests/test_ingestion_service.py tests/test_osdu_models.py = 108 passed (no regressions).
+- Did NOT touch Judson's `app/pages/4_🏷️_Legal_Tags.py` or any of Charlie's test files.
 ## 2026-05-05: Persistent Storage Backend Contract (Complete)
 
 **Status:** PLANNING COMPLETE, SYNTHESIZED WITH TEAM

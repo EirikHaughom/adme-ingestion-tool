@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = PROJECT_ROOT / "app"
 MAIN_PATH = APP_ROOT / "main.py"
-SETTINGS_PAGE_PATH = APP_ROOT / "pages" / "1_⚙️_Settings.py"
+SETTINGS_PAGE_PATH = APP_ROOT / "pages" / "1_⚙️_Instance_Configuration.py"
 
 
 def _run_streamlit_like_import(script_path: Path) -> subprocess.CompletedProcess[str]:

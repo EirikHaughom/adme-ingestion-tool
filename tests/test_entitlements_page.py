@@ -226,11 +226,11 @@ def test_page_blocks_when_no_connection_configured(
         call.args[0] for call in streamlit_recorder.calls_named("info")
     ]
     assert any(
-        "Settings" in message and "configure" in message.lower()
+        "Instance Configuration" in message and "configure" in message.lower()
         for message in info_messages
     )
     assert streamlit_recorder.calls_named("page_link"), (
-        "page should link operators back to Settings"
+        "page should link operators back to Instance Configuration"
     )
     assert spy["my_groups"] == []
     assert spy["groups"] == []
@@ -253,7 +253,7 @@ def test_page_blocks_when_user_token_missing(
     info_messages = [
         call.args[0] for call in streamlit_recorder.calls_named("info")
     ]
-    assert any("Settings" in message for message in info_messages)
+    assert any("Instance Configuration" in message for message in info_messages)
     assert spy["my_groups"] == []
     assert spy["groups"] == []
     assert spy["extract"] == []
@@ -278,7 +278,7 @@ def test_page_blocks_when_data_partition_missing(
     page_module.main()
 
     assert streamlit_recorder.calls_named("page_link"), (
-        "operators should be pointed back to Settings"
+        "operators should be pointed back to Instance Configuration"
     )
     assert spy["my_groups"] == []
     assert spy["groups"] == []
@@ -314,14 +314,14 @@ def test_page_blocks_when_user_token_has_no_oid_claim(
     assert error_messages, "no-OID branch must surface a friendly error"
     combined = "\n".join(error_messages)
     assert "Object ID" in combined
-    assert "Settings" in combined or any(
-        "Settings" in str(call.args[0])
+    assert "Instance Configuration" in combined or any(
+        "Instance Configuration" in str(call.args[0])
         for call in streamlit_recorder.calls_named("page_link")
     )
 
-    # Page must link back to Settings so the operator can re-sign-in.
+    # Page must link back to Instance Configuration so the operator can re-sign-in.
     assert streamlit_recorder.calls_named("page_link"), (
-        "no-OID branch must link operators back to Settings"
+        "no-OID branch must link operators back to Instance Configuration"
     )
 
     # Crucially, neither HTTP call fires.

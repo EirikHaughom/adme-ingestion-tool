@@ -35,8 +35,11 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-"app/pages/1_⚙️_Settings.py" = ["N999"]
+"app/pages/1_⚙️_Instance_Configuration.py" = ["N999"]
 "app/pages/2_🔑_Entitlements.py" = ["N999"]
+"app/pages/3_🏷️_Legal_Tags.py" = ["N999"]
+"app/pages/4_📥_Ingestion.py" = ["N999"]
+"app/pages/5_🔍_Search.py" = ["N999"]
 
 [tool.mypy]
 python_version = "3.11"
