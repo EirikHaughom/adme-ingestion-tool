@@ -27,20 +27,14 @@ from app.models.osdu import (
     DatasetTier,
     ManifestPreview,
     SubmitResult,
+    WorkflowStatus,
 )
 from app.services.ingestion import submit_manifest
-
-# TODO: remove ImportError guard once #13 (run_history) merges into main
-# and add ``"bulk_load"`` to the allowed ``submit_source`` set in
-# ``app/services/run_history.py``.
-try:
-    from app.services.run_history import (  # type: ignore[import-not-found]
-        record_workflow_finish,
-        record_workflow_submit,
-    )
-except ImportError:  # pragma: no cover - branch depends on merge order
-    record_workflow_submit = None  # type: ignore[assignment]
-    record_workflow_finish = None  # type: ignore[assignment]
+from app.services.run_history import (
+    RUN_HISTORY_WRITE_ERRORS,
+    record_workflow_finish,
+    record_workflow_submit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -248,16 +242,19 @@ def preview_tier(dataset_id: str, tier: str) -> list[ManifestPreview]:
         try:
             body = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "Skipping unreadable manifest %s: %s", manifest_path, exc
+            raise ValueError(
+                f"Cannot preview manifest {manifest_path.name}: {exc}"
+            ) from exc
+        if not isinstance(body, dict):
+            raise ValueError(
+                f"Cannot preview manifest {manifest_path.name}: "
+                "manifest body is not a JSON object"
             )
-            continue
-        if isinstance(body, dict):
-            kind_raw = body.get("kind")
-            kind = kind_raw if isinstance(kind_raw, str) else ""
-            records = body.get(section)
-            if isinstance(records, list):
-                record_count = len(records)
+        kind_raw = body.get("kind")
+        kind = kind_raw if isinstance(kind_raw, str) else ""
+        records = body.get(section)
+        if isinstance(records, list):
+            record_count = len(records)
         previews.append(
             ManifestPreview(
                 path=manifest_path,
@@ -317,6 +314,64 @@ def _extract_record_id(result: Any) -> str | None:
     return None
 
 
+def _format_utc_iso(value: datetime) -> str:
+    """Format a UTC ``datetime`` as the run-history ISO 8601 shape."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _top_level_kind(manifest_body: dict[str, Any]) -> str | None:
+    kind = manifest_body.get("kind")
+    return kind if isinstance(kind, str) and kind else None
+
+
+def _record_submit_history(
+    workflow_result: Any,
+    *,
+    manifest_body: dict[str, Any],
+    submitted_at: datetime,
+    data_partition_id: str,
+) -> None:
+    run_id = getattr(workflow_result, "run_id", None)
+    if not isinstance(run_id, str) or not run_id:
+        return
+
+    try:
+        record_workflow_submit(
+            run_id=run_id,
+            submitted_at=_format_utc_iso(submitted_at),
+            kind=_top_level_kind(manifest_body),
+            correlation_id=getattr(workflow_result, "correlation_id", None),
+            submit_source=SUBMIT_SOURCE,
+            data_partition_id=data_partition_id,
+        )
+    except RUN_HISTORY_WRITE_ERRORS:
+        logger.exception("record_workflow_submit failed for bulk run %s", run_id)
+
+    workflow_status = getattr(workflow_result, "status", None)
+    if workflow_status not in (WorkflowStatus.FINISHED, WorkflowStatus.FAILED):
+        return
+
+    error_message = getattr(workflow_result, "error_message", None)
+    latency_ms_raw = getattr(workflow_result, "latency_ms", 0)
+    try:
+        latency_ms = int(float(latency_ms_raw))
+    except (TypeError, ValueError):
+        latency_ms = 0
+
+    try:
+        record_workflow_finish(
+            run_id=run_id,
+            finished_at=_format_utc_iso(datetime.now(UTC)),
+            status=workflow_status,
+            latency_ms=latency_ms,
+            error_message=error_message if isinstance(error_message, str) else None,
+        )
+    except RUN_HISTORY_WRITE_ERRORS:
+        logger.exception("record_workflow_finish failed for bulk run %s", run_id)
+
+
 def submit_tier(
     dataset_id: str,
     tier: str,
@@ -369,47 +424,22 @@ def submit_tier(
                 },
             }
 
-            if record_workflow_submit is not None:
-                try:
-                    record_workflow_submit(
-                        submit_source=SUBMIT_SOURCE,
-                        dataset_id=dataset_id,
-                        tier=tier,
-                        manifest_path=str(manifest_path),
-                    )
-                except Exception:  # pragma: no cover - telemetry never fatal
-                    logger.exception(
-                        "record_workflow_submit failed for %s",
-                        manifest_path,
-                    )
-
             workflow_result = submit_manifest(connection, token, payload)
             if getattr(workflow_result, "ok", False):
                 status = "success"
                 run_id = getattr(workflow_result, "run_id", None)
                 record_id = _extract_record_id(workflow_result)
+                _record_submit_history(
+                    workflow_result,
+                    manifest_body=shaped,
+                    submitted_at=submitted_at,
+                    data_partition_id=data_partition_id,
+                )
             else:
                 error = (
                     getattr(workflow_result, "error_message", None)
                     or "submit_manifest returned ok=False"
                 )
-
-            if record_workflow_finish is not None:
-                try:
-                    record_workflow_finish(
-                        submit_source=SUBMIT_SOURCE,
-                        dataset_id=dataset_id,
-                        tier=tier,
-                        manifest_path=str(manifest_path),
-                        run_id=run_id,
-                        status=status,
-                        error=error,
-                    )
-                except Exception:  # pragma: no cover - telemetry never fatal
-                    logger.exception(
-                        "record_workflow_finish failed for %s",
-                        manifest_path,
-                    )
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             error = str(exc) or exc.__class__.__name__
             logger.warning(

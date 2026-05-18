@@ -8,6 +8,7 @@ where possible, ``monkeypatch`` for HTTP boundaries, and a hand-rolled
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +68,7 @@ def _err_result(message: str = "boom") -> WorkflowRunResult:
 
 
 @pytest.fixture(autouse=True)
-def _clear_dataset_cache() -> None:
+def _clear_dataset_cache() -> Iterator[None]:
     bulk_loader._clear_cache()
     yield
     bulk_loader._clear_cache()
@@ -204,6 +205,17 @@ def test_preview_tier_path_traversal_blocked(
         bulk_loader.preview_tier("evil", "reference-data")
 
 
+def test_preview_tier_unreadable_manifest_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_paths = _build_synthetic_tno(tmp_path, monkeypatch, file_count=1)
+    manifest_paths[0].write_text("{ not valid json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Cannot preview manifest load_0.json"):
+        bulk_loader.preview_tier("tno", "reference-data")
+
+
 # ---------------------------------------------------------------------------
 # submit_tier
 # ---------------------------------------------------------------------------
@@ -302,6 +314,60 @@ def test_submit_tier_calls_submit_manifest_once_per_file(
         assert result.record_id == "rec-1"
         assert result.error is None
         assert result.manifest_path in manifest_paths
+
+
+def test_submit_tier_records_run_history_for_accepted_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _build_synthetic_tno(tmp_path, monkeypatch, file_count=1)
+
+    submit_calls: list[dict[str, Any]] = []
+    finish_calls: list[dict[str, Any]] = []
+
+    def fake_submit(
+        connection: ADMEConnection,
+        token: str,
+        manifest_payload: dict[str, Any],
+    ) -> WorkflowRunResult:
+        return _ok_result(run_id="bulk-run-1")
+
+    def fake_record_submit(**kwargs: Any) -> None:
+        submit_calls.append(kwargs)
+
+    def fake_record_finish(**kwargs: Any) -> None:
+        finish_calls.append(kwargs)
+
+    monkeypatch.setattr(bulk_loader, "submit_manifest", fake_submit)
+    monkeypatch.setattr(bulk_loader, "record_workflow_submit", fake_record_submit)
+    monkeypatch.setattr(bulk_loader, "record_workflow_finish", fake_record_finish)
+
+    results = list(
+        bulk_loader.submit_tier(
+            "tno",
+            "reference-data",
+            acl_owners=["owner@example"],
+            acl_viewers=["viewer@example"],
+            legal_tag="example-legal",
+            data_partition_id="example-opendes",
+            connection=_connection(),
+            token="fake-token",
+        )
+    )
+
+    assert [r.run_id for r in results] == ["bulk-run-1"]
+    assert submit_calls == [
+        {
+            "run_id": "bulk-run-1",
+            "submitted_at": submit_calls[0]["submitted_at"],
+            "kind": "osdu:wks:Manifest:1.0.0",
+            "correlation_id": "corr-1",
+            "submit_source": "bulk_load",
+            "data_partition_id": "example-opendes",
+        }
+    ]
+    assert submit_calls[0]["submitted_at"].endswith("Z")
+    assert finish_calls == []
 
 
 def test_submit_tier_injects_acl_and_legal_into_records(

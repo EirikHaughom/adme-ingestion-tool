@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -665,6 +666,35 @@ def test_submit_success_persists_run_id_started_at_and_kinds(
     started_at = streamlit_recorder.session_state[SUBMIT_STARTED_AT_KEY]
     assert isinstance(started_at, datetime)
     assert streamlit_recorder.session_state[KINDS_KEY] == [KIND_A]
+    assert streamlit_recorder.session_state[POLLING_ACTIVE_KEY] is True
+
+
+def test_submit_success_ignores_run_history_sqlite_error(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.session_state[CONNECTION_KEY] = (
+        _service_principal_connection()
+    )
+    streamlit_recorder.session_state[MANIFEST_TEXT_KEY] = VALID_MANIFEST_TEXT
+    streamlit_recorder.session_state[LEGAL_TAG_KEY] = "tag-1"
+    streamlit_recorder.session_state[ACL_OWNERS_KEY] = "owners@x"
+    streamlit_recorder.session_state[ACL_VIEWERS_KEY] = "viewers@x"
+    streamlit_recorder.button_responses[VALIDATE_LABEL] = True
+    page_module = _load_ingestion_module(streamlit_recorder, monkeypatch)
+    spy = _patch_services(page_module, monkeypatch)
+
+    def fail_record_workflow_submit(**_: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        page_module, "record_workflow_submit", fail_record_workflow_submit
+    )
+
+    page_module.main()
+
+    assert len(spy.submit) == 1
+    assert streamlit_recorder.session_state[RUN_ID_KEY] == "run-42"
     assert streamlit_recorder.session_state[POLLING_ACTIVE_KEY] is True
 
 

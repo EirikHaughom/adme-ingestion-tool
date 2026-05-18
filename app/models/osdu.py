@@ -378,3 +378,35 @@ class SubmitResult:
     submitted_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class RunRow:
+    """One row from ``workflow_runs`` in the local run-history DB.
+
+    See :mod:`app.services.run_history`. ``status`` is the parsed enum;
+    ``submitted_at`` / ``finished_at`` are ISO 8601 UTC strings (Z-suffix).
+    ``submit_source`` is one of ``"manifest_page" | "builder" |
+    "bulk_runner" | "tno_loader" | "bulk_load"``.
+    """
+
+    run_id: str
+    submitted_at: str
+    finished_at: str | None
+    status: WorkflowStatus
+    kind: str | None
+    correlation_id: str | None
+    error_message: str | None
+    latency_ms: int | None
+    submit_source: str
+    data_partition_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class UploadRow:
+    """One row from ``file_uploads`` in the local run-history DB."""
+
+    record_id: str
+    uploaded_at: str
+    display_name: str
+    file_source: str
+    size_bytes: int | None
+    data_partition_id: str

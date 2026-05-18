@@ -21,7 +21,10 @@ import os
 import json
 
 # Import the existing csv_to_json module
-from csv_to_json import create_manifest_from_csv
+if __package__:
+    from .csv_to_json import create_manifest_from_csv
+else:
+    from csv_to_json import create_manifest_from_csv
 
 def main():
     parser = argparse.ArgumentParser(description='Generate OSDU manifests from CSV data using templates')

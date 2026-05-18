@@ -6,9 +6,9 @@ connection configuration.  It is intentionally a thin layer over stdlib
 single logical operation, and closes the connection.  No module-global
 cursor, no Streamlit caching, no ORM.
 
-Auth/session material (access tokens, MSAL pending flows, user auth state,
-client secrets) is **never** written here.  ``client_secret`` is dropped
-from any :class:`ADMEConnection` before insert/update — see
+Auth/session material (access tokens, MSAL pending flows, user auth state)
+is **never** written here.  ``client_secret`` is dropped from every SQLite
+insert/update and stored separately in the OS credential store — see
 :func:`save_connection`.
 """
 

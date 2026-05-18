@@ -22,7 +22,9 @@ from app.models.connection import (
     AuthMethod,
     ServiceHealthResult,
 )
+from app.services import settings_store
 from app.services.auth import AuthenticationError, UserAuthFlowStart, UserAuthState
+from app.storage_bridge import StorageSyncStatus
 from tests.support.streamlit_recorder import StreamlitRecorder
 
 SETTINGS_PAGE_PATH = (
@@ -45,6 +47,21 @@ def _load_settings_module(
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    monkeypatch.setattr(
+        module,
+        "load_persisted_connection_state",
+        lambda session_state: StorageSyncStatus(available=True),
+    )
+    monkeypatch.setattr(
+        module,
+        "persist_connection_profile",
+        lambda connection: StorageSyncStatus(available=True),
+    )
+    monkeypatch.setattr(
+        module,
+        "persist_health_run",
+        lambda connection, results: StorageSyncStatus(available=True),
+    )
     return module
 
 
@@ -96,6 +113,9 @@ def test_settings_page_renders_client_secret_for_service_principal(
     ]
     assert client_secret_calls
     assert client_secret_calls[0].kwargs["type"] == "password"
+    captions = [call.args[0] for call in streamlit_recorder.calls_named("caption")]
+    assert any("OS credential store" in message for message in captions)
+    assert all("stored only for this session" not in message for message in captions)
 
 
 def test_settings_page_hides_client_secret_for_user_impersonation(
@@ -178,6 +198,55 @@ def test_settings_page_defaults_token_scope_to_adme_resource_scope(
     )
 
 
+def test_settings_page_loads_persisted_profile_before_rendering_form(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+    healthy_service_results: list[ServiceHealthResult],
+) -> None:
+    settings_module = _load_settings_module(streamlit_recorder, monkeypatch)
+
+    def fake_load_persisted_connection_state(
+        session_state: dict[str, object],
+    ) -> StorageSyncStatus:
+        session_state[CONNECTION_KEY] = _user_connection()
+        session_state[HEALTH_RESULTS_KEY] = healthy_service_results
+        return StorageSyncStatus(
+            available=True,
+            message="Loaded saved connection settings and latest validation.",
+            severity="info",
+            profile_loaded=True,
+            health_loaded=True,
+        )
+
+    monkeypatch.setattr(
+        settings_module,
+        "load_persisted_connection_state",
+        fake_load_persisted_connection_state,
+    )
+    monkeypatch.setattr(
+        settings_module,
+        "start_user_auth_flow",
+        lambda connection: _flow_start(),
+    )
+
+    settings_module.main()
+
+    assert streamlit_recorder.session_state[CONNECTION_KEY] == _user_connection()
+    assert streamlit_recorder.session_state[HEALTH_RESULTS_KEY] == (
+        healthy_service_results
+    )
+    [endpoint_call] = [
+        call
+        for call in streamlit_recorder.calls_named("text_input")
+        if call.args == ("ADME endpoint",)
+    ]
+    assert endpoint_call.kwargs["value"] == _user_connection().endpoint
+    assert any(
+        call.args == ("Loaded saved connection settings and latest validation.",)
+        for call in streamlit_recorder.calls_named("info")
+    )
+
+
 def test_settings_page_tests_connection_and_stores_results(
     streamlit_recorder: StreamlitRecorder,
     monkeypatch: pytest.MonkeyPatch,
@@ -210,8 +279,32 @@ def test_settings_page_tests_connection_and_stores_results(
         captured["health_connection"] = connection
         return healthy_service_results
 
+    def fake_persist_connection_profile(
+        connection: ADMEConnection,
+    ) -> StorageSyncStatus:
+        captured["persisted_profile"] = connection
+        return StorageSyncStatus(available=True)
+
+    def fake_persist_health_run(
+        connection: ADMEConnection,
+        results: list[ServiceHealthResult],
+    ) -> StorageSyncStatus:
+        captured["persisted_health_connection"] = connection
+        captured["persisted_health_results"] = results
+        return StorageSyncStatus(available=True)
+
     monkeypatch.setattr(settings_module, "get_token", fake_get_token)
     monkeypatch.setattr(settings_module, "check_all", fake_check_all)
+    monkeypatch.setattr(
+        settings_module,
+        "persist_connection_profile",
+        fake_persist_connection_profile,
+    )
+    monkeypatch.setattr(
+        settings_module,
+        "persist_health_run",
+        fake_persist_health_run,
+    )
 
     settings_module.main()
 
@@ -227,6 +320,97 @@ def test_settings_page_tests_connection_and_stores_results(
     assert captured["token"] == "test-token"
     assert captured["connection"] == saved_connection
     assert captured["health_connection"] == saved_connection
+    persisted_profile = captured["persisted_profile"]
+    assert isinstance(persisted_profile, ADMEConnection)
+    assert persisted_profile.client_secret == ""
+    assert persisted_profile.auth_method == AuthMethod.SERVICE_PRINCIPAL
+    persisted_health_connection = captured["persisted_health_connection"]
+    assert isinstance(persisted_health_connection, ADMEConnection)
+    assert persisted_health_connection.client_secret == ""
+    assert captured["persisted_health_results"] == healthy_service_results
+
+
+def test_settings_page_save_persists_non_secret_profile(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.widget_values.update(
+        {
+            "ADME endpoint": "https://example.energy.azure.com",
+            "Tenant ID": "11111111-1111-1111-1111-111111111111",
+            "Client ID": "22222222-2222-2222-2222-222222222222",
+            "Data partition ID": "example-opendes",
+            "Authentication method": AuthMethod.SERVICE_PRINCIPAL,
+            "Client secret": "super-secret",
+        }
+    )
+    streamlit_recorder.submit_responses["Save Settings"] = True
+    settings_module = _load_settings_module(streamlit_recorder, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def fake_persist_connection_profile(
+        connection: ADMEConnection,
+    ) -> StorageSyncStatus:
+        captured["persisted_profile"] = connection
+        return StorageSyncStatus(available=True)
+
+    monkeypatch.setattr(
+        settings_module,
+        "persist_connection_profile",
+        fake_persist_connection_profile,
+    )
+
+    settings_module.main()
+
+    session_connection = streamlit_recorder.session_state[CONNECTION_KEY]
+    assert isinstance(session_connection, ADMEConnection)
+    assert session_connection.client_secret == "super-secret"
+    persisted_profile = captured["persisted_profile"]
+    assert isinstance(persisted_profile, ADMEConnection)
+    assert persisted_profile.client_secret == ""
+    assert persisted_profile.endpoint == session_connection.endpoint
+    assert any(
+        call.args
+        == (
+            "Connection settings saved persistently. Service-principal client "
+            "secret is saved in your OS credential store.",
+        )
+        for call in streamlit_recorder.calls_named("success")
+    )
+
+
+def test_settings_page_surfaces_persistence_error_and_skips_validation(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streamlit_recorder.widget_values.update(
+        {
+            "ADME endpoint": "https://example.energy.azure.com",
+            "Tenant ID": "11111111-1111-1111-1111-111111111111",
+            "Client ID": "22222222-2222-2222-2222-222222222222",
+            "Data partition ID": "example-opendes",
+            "Authentication method": AuthMethod.SERVICE_PRINCIPAL,
+            "Client secret": "super-secret",
+        }
+    )
+    streamlit_recorder.submit_responses["Test Connection"] = True
+    settings_module = _load_settings_module(streamlit_recorder, monkeypatch)
+
+    def fail_save(*_args: object, **_kwargs: object) -> None:
+        raise settings_store.SettingsStoreError("keyring locked")
+
+    def fail_get_token(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("validation should not run after save failure")
+
+    monkeypatch.setattr(settings_module, "save_connection", fail_save)
+    monkeypatch.setattr(settings_module, "get_token", fail_get_token)
+
+    settings_module.main()
+
+    error_messages = [call.args[0] for call in streamlit_recorder.calls_named("error")]
+    assert "Connection settings could not be saved: keyring locked" in error_messages
+    assert streamlit_recorder.session_state[CONNECTION_KEY] is None
+    assert streamlit_recorder.session_state[HEALTH_RESULTS_KEY] == []
 
 
 def test_settings_page_allows_blank_token_scope_for_backend_fallback(

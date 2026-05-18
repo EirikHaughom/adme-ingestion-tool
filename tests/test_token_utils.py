@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from app.services.token_utils import extract_object_id
+from app.services.token_utils import extract_first_string_claim, extract_object_id
 
 
 def _b64url_no_pad(data: bytes) -> str:
@@ -65,6 +65,24 @@ def test_extract_object_id_returns_realistic_uuids(oid: str) -> None:
     token = _make_jwt({"oid": oid, "aud": "https://energy.azure.com"})
 
     assert extract_object_id(token) == oid
+
+
+def test_extract_first_string_claim_returns_first_available_claim() -> None:
+    token = _make_jwt({"appid": "app-id", "azp": "authorized-party"})
+
+    assert extract_first_string_claim(token, ("azp", "appid")) == "authorized-party"
+
+
+def test_extract_first_string_claim_skips_missing_empty_and_non_string() -> None:
+    token = _make_jwt({"appid": "", "azp": 12345, "oid": "object-id"})
+
+    assert extract_first_string_claim(token, ("missing", "appid", "azp", "oid")) == (
+        "object-id"
+    )
+
+
+def test_extract_first_string_claim_returns_none_for_malformed_token() -> None:
+    assert extract_first_string_claim("not-a-jwt", ("appid", "azp")) is None
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -565,7 +565,10 @@ def test_submit_renders_mixed_success_and_failure_results(
     )
 
     # Submit results stored for re-render on next rerun.
-    stored = streamlit_recorder.session_state[SUBMIT_RESULTS_KEY]
+    stored = cast(
+        list[SubmitResult],
+        streamlit_recorder.session_state[SUBMIT_RESULTS_KEY],
+    )
     assert len(stored) == 2
     assert stored[0].status == "success"
     assert stored[1].status == "error"

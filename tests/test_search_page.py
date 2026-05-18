@@ -6,7 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -347,7 +347,7 @@ def test_autorun_fires_list_kinds_and_search_on_first_render(
     assert len(spy.search_calls) == 1
     assert streamlit_recorder.session_state[AUTORUN_DONE_KEY] is True
     # Kind options populated.
-    options = streamlit_recorder.session_state[KIND_OPTIONS_KEY]
+    options = cast(list[str], streamlit_recorder.session_state[KIND_OPTIONS_KEY])
     assert options[0] == WILDCARD_KIND
     assert "osdu:wks:reference-data:1.0.0" in options
 
@@ -714,9 +714,13 @@ def test_fetch_full_record_button_calls_get_record_and_caches(
 
     assert len(spy.get_record_calls) == 1
     assert spy.get_record_calls[0][2] == "opendes:doc:1"
-    cache = streamlit_recorder.session_state[FULL_RECORD_CACHE_KEY]
+    cache = cast(
+        dict[str, dict[str, object]],
+        streamlit_recorder.session_state[FULL_RECORD_CACHE_KEY],
+    )
     assert "opendes:doc:1" in cache
-    assert cache["opendes:doc:1"]["id"] == "opendes:doc:1"
+    cached_record = cache["opendes:doc:1"]
+    assert cached_record["id"] == "opendes:doc:1"
 
 
 def test_fetch_full_record_404_sets_sticky_error(
@@ -740,7 +744,7 @@ def test_fetch_full_record_404_sets_sticky_error(
     page_module.main()
 
     err = streamlit_recorder.session_state[LAST_ERROR_KEY]
-    assert err is not None
+    assert isinstance(err, str)
     assert "opendes:doc:1" in err
     assert "not found" in err.lower() or "not visible" in err.lower()
 
@@ -765,7 +769,7 @@ def test_search_400_bad_lucene_sets_sticky_error_and_does_not_crash(
     page_module.main()
 
     err = streamlit_recorder.session_state[LAST_ERROR_KEY]
-    assert err is not None
+    assert isinstance(err, str)
     assert "invalid lucene syntax" in err
     # Sticky error key set for the *next* render (the page renders the
     # sticky banner above the toolbar, so it appears on the rerun
@@ -811,10 +815,11 @@ def test_history_dataframe_renders_when_history_present(
 
     # Autorun pushed two history entries (list-kinds + search).
     history = streamlit_recorder.session_state[HISTORY_KEY]
+    assert isinstance(history, list)
     assert len(history) >= 2
     # Subheader rendered.
     subheaders = [
-        call.args[0] for call in streamlit_recorder.calls_named("subheader")
+        str(call.args[0]) for call in streamlit_recorder.calls_named("subheader")
     ]
     assert any("Session history" in s for s in subheaders)
 

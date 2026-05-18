@@ -8,6 +8,7 @@ state, drive widget answers, and assert on recorded calls + state.
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -679,6 +680,33 @@ def test_happy_path_runs_all_three_phases_and_records_result(
     assert summary["timestamp"].endswith("Z")
 
 
+def test_happy_path_ignores_run_history_sqlite_error(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_ready_state(streamlit_recorder)
+    streamlit_recorder.file_uploader_responses[FILE_UPLOADER_LABEL] = (
+        FakeUploadedFile()
+    )
+    streamlit_recorder.button_responses[SUBMIT_BUTTON_LABEL] = True
+    page_module = _load_page(streamlit_recorder, monkeypatch)
+    spy = _patch_services(page_module, monkeypatch)
+
+    def fail_record_file_upload(**_: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(page_module, "record_file_upload", fail_record_file_upload)
+
+    page_module.main()
+
+    assert len(spy.upload_url) == 1
+    assert len(spy.upload_bytes) == 1
+    assert len(spy.metadata) == 1
+    result = streamlit_recorder.session_state[FILE_UPLOAD_LAST_RESULT_KEY]
+    assert isinstance(result, FileMetadataResult)
+    assert result.ok is True
+
+
 # ===========================================================================
 # Phase 1 failure — uploadURL 401
 # ===========================================================================
@@ -713,10 +741,11 @@ def test_phase1_failure_sets_sticky_error_no_put_attempted(
     assert spy.metadata == []
     # Sticky error pinned.
     sticky = streamlit_recorder.session_state[FILE_UPLOAD_LAST_ERROR_KEY]
-    assert sticky is not None
+    assert isinstance(sticky, str)
     assert "Unauthorized" in sticky or "401" in sticky
     # History has exactly 1 entry (the failed upload-url).
     history = streamlit_recorder.session_state[FILE_UPLOAD_HISTORY_KEY]
+    assert isinstance(history, list)
     assert len(history) == 1
     assert history[0]["endpoint"] == "upload-url"
     assert history[0]["ok"] is False
@@ -756,7 +785,7 @@ def test_phase2_failure_sticky_error_mentions_file_id(
     assert spy.metadata == [], "metadata POST must not fire when PUT failed"
 
     sticky = streamlit_recorder.session_state[FILE_UPLOAD_LAST_ERROR_KEY]
-    assert sticky is not None
+    assert isinstance(sticky, str)
     # File id from Phase 1 is mentioned for recovery.
     assert "fid-99" in sticky
     assert "timed out" in sticky.lower()
@@ -795,13 +824,14 @@ def test_phase3_failure_sticky_error_mentions_file_id_and_warns_unregistered(
     assert len(spy.metadata) == 1
 
     sticky = streamlit_recorder.session_state[FILE_UPLOAD_LAST_ERROR_KEY]
-    assert sticky is not None
+    assert isinstance(sticky, str)
     assert "fid-99" in sticky
     # The operator-recovery warning hints at unregistered file.
     assert "uploaded" in sticky.lower()
     assert "metadata" in sticky.lower()
     # Failed metadata → NO upload_summary row appended.
     history = streamlit_recorder.session_state[FILE_UPLOAD_HISTORY_KEY]
+    assert isinstance(history, list)
     summary_rows = [
         row for row in history if row.get("kind") == "upload_summary"
     ]

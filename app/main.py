@@ -27,6 +27,10 @@ from app.connection_state import (  # noqa: E402
     results_to_table_rows,
     summarize_health,
 )
+from app.storage_bridge import (  # noqa: E402
+    StorageSyncStatus,
+    load_persisted_connection_state,
+)
 
 INSTANCE_CONFIG_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 ENTITLEMENTS_PAGE_PATH = "pages/2_🔑_Entitlements.py"
@@ -36,6 +40,7 @@ INGESTION_PAGE_PATH = "pages/5_📄_Manifest.py"
 FILE_UPLOAD_PAGE_PATH = "pages/6_📂_File.py"
 SEARCH_PAGE_PATH = "pages/7_🔍_Search.py"
 BULK_LOAD_PAGE_PATH = "pages/9_📥_Bulk_Load.py"
+HISTORY_PAGE_PATH = "pages/8_📊_History.py"
 
 
 def _render_home() -> None:
@@ -44,6 +49,12 @@ def _render_home() -> None:
     st.markdown(
         "Connect an Azure Data Manager for Energy instance, validate core "
         "OSDU services, and keep operators on the shortest path to action."
+    )
+    st.caption(
+        "Saved connection profiles and completed validation results load from "
+        "persistent storage when available. Service-principal secrets are "
+        "stored in the OS credential store; Microsoft sign-in remains tied to "
+        "each Streamlit session."
     )
     st.page_link(
         INSTANCE_CONFIG_PAGE_PATH,
@@ -57,14 +68,15 @@ def _render_home() -> None:
     )
 
     ensure_session_defaults(st.session_state)
+    _render_storage_status(load_persisted_connection_state(st.session_state))
     connection = get_connection(st.session_state)
     overall_state = get_overall_state(st.session_state)
 
     st.subheader("Connection state")
     st.markdown(f"**Status:** {format_overall_state(overall_state)}")
     st.caption(
-        "Need to change this session's connection? "
-        "Open Instance Configuration."
+        "Need to change this session's connection, restore a client secret, or "
+        "sign in again? Open Instance Configuration."
     )
 
     if connection is None or overall_state == "not_configured":
@@ -126,6 +138,18 @@ def _render_home() -> None:
     )
 
 
+def _render_storage_status(status: StorageSyncStatus) -> None:
+    """Show storage sync feedback without blocking session-only operation."""
+    if not status.message:
+        return
+    if status.severity == "error":
+        st.error(status.message)
+    elif status.severity == "warning":
+        st.warning(status.message)
+    elif status.severity == "info":
+        st.info(status.message)
+
+
 def main() -> None:
     """Build the grouped navigation and run the selected page."""
     st.set_page_config(
@@ -180,6 +204,11 @@ def main() -> None:
         title="Search",
         icon="🔍",
     )
+    history_page = st.Page(
+        HISTORY_PAGE_PATH,
+        title="History",
+        icon="📊",
+    )
 
     nav = st.navigation(
         {
@@ -195,7 +224,7 @@ def main() -> None:
                 file_page,
                 bulk_load_page,
             ],
-            "Operate": [search_page],
+            "Operate": [search_page, history_page],
         }
     )
     nav.run()

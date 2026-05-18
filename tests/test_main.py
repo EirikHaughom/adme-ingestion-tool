@@ -10,6 +10,7 @@ import pytest
 
 from app.connection_state import CONNECTION_KEY, HEALTH_ERROR_KEY, HEALTH_RESULTS_KEY
 from app.models.connection import ADMEConnection, AuthMethod, ServiceHealthResult
+from app.storage_bridge import StorageSyncStatus
 from tests.support.streamlit_recorder import StreamlitRecorder
 
 
@@ -19,7 +20,13 @@ def _load_main_module(
 ) -> ModuleType:
     monkeypatch.setitem(sys.modules, "streamlit", streamlit_recorder)
     sys.modules.pop("app.main", None)
-    return importlib.import_module("app.main")
+    module = importlib.import_module("app.main")
+    monkeypatch.setattr(
+        module,
+        "load_persisted_connection_state",
+        lambda session_state: StorageSyncStatus(available=True),
+    )
+    return module
 
 
 def test_main_sets_expected_page_config(
@@ -59,10 +66,12 @@ def test_main_prompts_operator_to_open_settings_when_not_configured(
 
     main_module.main()
 
-    [warning_call] = streamlit_recorder.calls_named("warning")
-    assert warning_call.args == (
-        "No ADME connection is configured for this session.",
-    )
+    warning_messages = [
+        call.args[0] for call in streamlit_recorder.calls_named("warning")
+    ]
+    assert (
+        "No ADME connection is configured for this session."
+    ) in warning_messages
 
     [page_link_call] = [
         call
@@ -81,6 +90,57 @@ def test_main_prompts_operator_to_open_settings_when_not_configured(
         if call.args == ("**Status:** Not configured",)
     ]
     assert markdown_call.args == ("**Status:** Not configured",)
+
+
+def test_main_loads_saved_profile_and_validation_from_storage(
+    streamlit_recorder: StreamlitRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+    healthy_service_results: list[ServiceHealthResult],
+) -> None:
+    main_module = _load_main_module(streamlit_recorder, monkeypatch)
+
+    def fake_load_persisted_connection_state(
+        session_state: dict[str, object],
+    ) -> StorageSyncStatus:
+        session_state[CONNECTION_KEY] = ADMEConnection(
+            endpoint="https://stored.energy.azure.com",
+            tenant_id="11111111-1111-1111-1111-111111111111",
+            client_id="22222222-2222-2222-2222-222222222222",
+            data_partition_id="stored-opendes",
+            auth_method=AuthMethod.USER_IMPERSONATION,
+        )
+        session_state[HEALTH_RESULTS_KEY] = healthy_service_results
+        return StorageSyncStatus(
+            available=True,
+            message="Loaded saved connection settings and latest validation.",
+            severity="info",
+            profile_loaded=True,
+            health_loaded=True,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "load_persisted_connection_state",
+        fake_load_persisted_connection_state,
+    )
+
+    main_module.main()
+
+    assert any(
+        call.args
+        == (
+            "Loaded saved connection settings and latest validation.",
+        )
+        for call in streamlit_recorder.calls_named("info")
+    )
+    assert any(
+        "https://stored.energy.azure.com" in call.args[0]
+        for call in streamlit_recorder.calls_named("markdown")
+    )
+    [success_call] = streamlit_recorder.calls_named("success")
+    assert success_call.args == (
+        "All 11 configured OSDU services responded successfully.",
+    )
 
 
 def test_main_renders_healthy_connection_summary(

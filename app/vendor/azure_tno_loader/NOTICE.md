@@ -20,11 +20,12 @@ From `src/generate-manifest-scripts/` in the upstream repo:
 | File | Size | Purpose |
 |---|---|---|
 | `csv_to_json.py` | 29,898 bytes | Reads TNO CSV inputs and emits per-record OSDU JSON manifests. |
-| `csv_to_json_wrapper.py` | 5,240 bytes | CLI wrapper around `csv_to_json.py` (handles `--schema-ns-name`, batching). |
+| `csv_to_json_wrapper.py` | 5,323 bytes | CLI wrapper around `csv_to_json.py` (handles `--schema-ns-name`, batching). |
 
-Both files are vendored **as-is** — no edits. An empty `__init__.py` is
-added so Python can import the package, but the upstream files themselves
-are byte-for-byte identical to their source revisions.
+`csv_to_json.py` is vendored **as-is** — no edits. An empty `__init__.py`
+is added so Python can import the package. `csv_to_json_wrapper.py` keeps
+the upstream behavior but has a local import shim so it works both as a
+package module and as the original script.
 
 ## Why vendored (not pip-installed)
 
@@ -40,8 +41,9 @@ To pull a newer revision:
 2. `git rev-parse HEAD` — record the new SHA
 3. Copy `src/generate-manifest-scripts/csv_to_json.py` and `csv_to_json_wrapper.py`
    over the existing files
-4. Update the **Commit SHA** and **Commit date** lines above
-5. Run the test in `tests/test_tno_vendor.py` and the existing pytest suite
+4. Re-apply the package/script import shim in `csv_to_json_wrapper.py`
+5. Update the **Commit SHA** and **Commit date** lines above
+6. Run the test in `tests/test_tno_vendor.py` and the existing pytest suite
 
 ## Lint / type-check exclusions
 

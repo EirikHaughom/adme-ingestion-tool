@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Sequence
 
 
 def extract_object_id(token: str) -> str | None:
@@ -28,6 +29,29 @@ def extract_object_id(token: str) -> str | None:
     wrong number of segments, bad base64, non-UTF-8 bytes, non-JSON
     payload, missing ``oid`` claim — yields ``None`` rather than raising.
     """
+    return extract_first_string_claim(token, ("oid",))
+
+
+def extract_first_string_claim(
+    token: str,
+    claim_names: Sequence[str],
+) -> str | None:
+    """Return the first non-empty string claim from ``claim_names``.
+
+    The JWT payload is decoded without validation for local inspection only;
+    see the module docstring for the trust boundary.
+    """
+    payload = _decode_payload(token)
+    if payload is None:
+        return None
+    for claim_name in claim_names:
+        value = payload.get(claim_name)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _decode_payload(token: str) -> dict[str, object] | None:
     if not token:
         return None
     try:
@@ -40,9 +64,6 @@ def extract_object_id(token: str) -> str | None:
         payload = json.loads(decoded_bytes.decode("utf-8"))
     except (ValueError, binascii.Error, UnicodeDecodeError, IndexError):
         return None
-    if not isinstance(payload, dict):
-        return None
-    oid = payload.get("oid")
-    if isinstance(oid, str) and oid:
-        return oid
+    if isinstance(payload, dict):
+        return payload
     return None

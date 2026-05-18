@@ -178,3 +178,20 @@ change required.
 - Row selection: used a selectbox of ids (not `st.dataframe(on_select=...)`). Dataframe row-click is unreliable in Streamlit 1.57.
 - Page registered in `app/main.py` under the Operate group after Ingestion. New emoji filename added to `pyproject.toml` per-file-ignores for N999.
 - `mypy app` and `ruff check` both clean; `pytest -q tests/test_main.py` 6/6.
+## 2026-05-05T20:00:00.287+02:00 Storage UI Persistence Wiring
+- Added Streamlit startup hydration through `app.storage_bridge` so Welcome and Settings can load the active saved profile plus latest validation without storing auth material in session persistence.
+- Save Settings now sends only a secret-free connection profile to storage while keeping service-principal `client_secret` in Streamlit session state for the current operator session.
+- Test Connection keeps existing session health behavior and records completed health results through storage when available; storage failures surface clear UI warnings/errors without blocking safe session-only use.
+- Validation: `python -m pytest -q`; `python -m ruff check app tests`; `python -m mypy app tests`.
+
+## 2026-05-06T06:44:31.579Z: PR #9 Storage Comparison Review
+
+**Finding:** Local implementation keeps hydration explicit and operator-visible; storage decoupled from connection_state. PR #9 hides hydration logic and swallows failures.
+
+**Rationale:**
+- Local pattern: `load_persisted_connection_state` / `persist_connection_profile` / `persist_health_run` in Streamlit pages (Settings, Welcome)
+- Hydration explicit in code; operator sees success/failure feedback
+- Storage unavailable → clear UI message, session-only fallback
+- PR #9 obscures hydration; error handling implicit
+
+**Recommendation:** STICK WITH LOCAL; close PR #9 as superseded.
