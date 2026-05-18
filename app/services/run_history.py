@@ -58,7 +58,7 @@ RUN_HISTORY_WRITE_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 VALID_SUBMIT_SOURCES: frozenset[str] = frozenset(
-    {"manifest_page", "builder", "bulk_runner", "tno_loader"}
+    {"manifest_page", "builder", "bulk_runner", "tno_loader", "bulk_load"}
 )
 
 _SCHEMA_V1 = """

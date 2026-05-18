@@ -148,7 +148,7 @@ def test_record_workflow_submit_rejects_unknown_submit_source(
 
 @pytest.mark.parametrize(
     "source",
-    ["manifest_page", "builder", "bulk_runner", "tno_loader"],
+    ["manifest_page", "builder", "bulk_runner", "tno_loader", "bulk_load"],
 )
 def test_record_workflow_submit_accepts_each_locked_source(
     run_history_tmp_db: Path, source: str
