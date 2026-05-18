@@ -1,0 +1,53 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--VerticalMeasurementPath:Elevation",
+            "kind": "osdu:wks:reference-data--VerticalMeasurementPath:1.0.0",
+            "data": {
+                "Name": "Elevation",
+                "Code": "Elevation"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--VerticalMeasurementPath:Md",
+            "kind": "osdu:wks:reference-data--VerticalMeasurementPath:1.0.0",
+            "data": {
+                "Name": "Measured Depth",
+                "Code": "Md"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--VerticalMeasurementPath:Tvd",
+            "kind": "osdu:wks:reference-data--VerticalMeasurementPath:1.0.0",
+            "data": {
+                "Name": "True Vertical Depth",
+                "Code": "Tvd"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

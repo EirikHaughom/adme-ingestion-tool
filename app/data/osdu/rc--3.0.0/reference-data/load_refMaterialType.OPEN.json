@@ -1,0 +1,226 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--MaterialType:Coal",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Coal",
+                "Code": "Coal"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Dry",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Dry",
+                "Code": "Dry"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Flr",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Flr",
+                "Code": "Flr"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Gos",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Gos",
+                "Code": "Gos"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Gss",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Gss",
+                "Code": "Gss"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Gwos",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Gwos",
+                "Code": "Gwos"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Oag",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Oag",
+                "Code": "Oag"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Ols",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Ols",
+                "Code": "Ols"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Owgs",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Owgs",
+                "Code": "Owgs"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Salt",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Salt",
+                "Code": "Salt"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Unk",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Unk",
+                "Code": "Unk"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Wtr",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Wtr",
+                "Code": "Wtr"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--MaterialType:Wts",
+            "kind": "osdu:wks:reference-data--MaterialType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Wts",
+                "Code": "Wts"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

@@ -1,0 +1,56 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--SchemaFormatType:LAS",
+            "kind": "osdu:wks:reference-data--SchemaFormatType:1.0.0",
+            "data": {
+                "Source": "CWLS",
+                "Name": "LAS",
+                "Code": "LAS"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--SchemaFormatType:TabSeparatedColumnarText",
+            "kind": "osdu:wks:reference-data--SchemaFormatType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "TabSeparatedColumnarText",
+                "Code": "TabSeparatedColumnarText"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--SchemaFormatType:LAS2",
+            "kind": "osdu:wks:reference-data--SchemaFormatType:1.0.0",
+            "data": {
+                "Source": "CWLS",
+                "Name": "LAS2",
+                "Code": "LAS2"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

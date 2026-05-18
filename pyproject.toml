@@ -30,6 +30,8 @@ postgres = [
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# Vendored from Azure/osdu-data-load-tno under Apache-2.0; do not lint
+extend-exclude = ["app/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
@@ -49,6 +51,11 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+# Vendored from Azure/osdu-data-load-tno under Apache-2.0; do not type-check
+[[tool.mypy.overrides]]
+module = "app.vendor.*"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

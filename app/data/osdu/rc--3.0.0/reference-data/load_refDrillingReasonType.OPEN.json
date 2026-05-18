@@ -1,0 +1,277 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--DrillingReasonType:EVA-HC",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Evaluation Hydrocarbons",
+                "Code": "EVA-HC"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:EXP-HC",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Exploration Hydrocarbons",
+                "Code": "EXP-HC"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-HC",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Development Hydrocarbons",
+                "Code": "DEV-HC"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:EXP-C",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Exploration Coal",
+                "Code": "EXP-C"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:EXP-W",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Exploration Water",
+                "Code": "EXP-W"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-PH",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Development Heat Extraction",
+                "Code": "DEV-PH"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:OBS",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Observation",
+                "Code": "OBS"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:EXP",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Exploration",
+                "Code": "EXP"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-I",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Injection",
+                "Code": "DEV-I"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:EXP-S",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Salt Exploration",
+                "Code": "EXP-S"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-PS",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Development Salt",
+                "Code": "DEV-PS"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-SG",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Development Gas Storage",
+                "Code": "DEV-SG"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:VKN-G",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Geologic Exploration",
+                "Code": "VKN-G"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:UNK",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Unknown",
+                "Code": "UNK"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-C",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Development Coal",
+                "Code": "DEV-C"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--DrillingReasonType:DEV-PW",
+            "kind": "osdu:wks:reference-data--DrillingReasonType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Development Water",
+                "Code": "DEV-PW"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

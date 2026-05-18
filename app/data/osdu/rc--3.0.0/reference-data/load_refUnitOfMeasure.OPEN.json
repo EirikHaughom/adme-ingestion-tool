@@ -1,0 +1,165 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:M",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "M",
+                "Code": "M",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1.0,
+                "CoefficientC": 1.0,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1.0,\"c\":1.0,\"d\":0.0},\"symbol\":\"M\",\"baseMeasurement\":{\"ancestry\":\"L\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:CPS",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Count per Second",
+                "Code": "CPS",
+                "UnitDimensionName": "CPS",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1.0,
+                "CoefficientC": 1.0,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1.0,\"c\":1.0,\"d\":0.0},\"symbol\":\"CPS\",\"baseMeasurement\":{\"ancestry\":\"none\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:G%2FC3",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "Energistics",
+                "Name": "Grams per cubivc centimeter",
+                "Code": "G%2FC3",
+                "UnitDimensionName": "G%2FC3",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1000.0,
+                "CoefficientC": 1.0,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1000.0,\"c\":1.0,\"d\":0.0},\"symbol\":\"G/C3\",\"baseMeasurement\":{\"ancestry\":\"M/L3\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:GAPI",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "Energistics",
+                "Name": "API Gamma Ray Unit",
+                "Code": "GAPI",
+                "UnitDimensionName": "GAPI",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1.0,
+                "CoefficientC": 1.0,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1.0,\"c\":1.0,\"d\":0.0},\"symbol\":\"GAPI\",\"baseMeasurement\":{\"ancestry\":\"none\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:NAPI",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "Energistics",
+                "Name": "API neutron unit",
+                "Code": "NAPI",
+                "UnitDimensionName": "NAPI",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1.0,
+                "CoefficientC": 1.0,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1.0,\"c\":1.0,\"d\":0.0},\"symbol\":\"NAPI\",\"baseMeasurement\":{\"ancestry\":\"none\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:US%2FF",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "Energistics",
+                "Name": "Microseconds per Foot",
+                "Code": "US%2FF",
+                "UnitDimensionName": "US%2FF",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1e-06,
+                "CoefficientC": 0.3048,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1e-06,\"c\":0.3048,\"d\":0.0},\"symbol\":\"US/F\",\"baseMeasurement\":{\"ancestry\":\"T/L\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--UnitOfMeasure:V%2FV",
+            "kind": "osdu:wks:reference-data--UnitOfMeasure:1.0.0",
+            "data": {
+                "Source": "Energistics",
+                "Name": "Fractional Volume",
+                "Code": "V%2FV",
+                "UnitDimensionName": "V%2FV",
+                "CoefficientA": 0.0,
+                "CoefficientB": 1.0,
+                "CoefficientC": 1.0,
+                "CoefficientD": 0.0,
+                "PersistableReference": "{\"abcd\":{\"a\":0.0,\"b\":1.0,\"c\":1.0,\"d\":0.0},\"symbol\":\"V/V\",\"baseMeasurement\":{\"ancestry\":\"1\",\"type\":\"UM\"},\"type\":\"UAD\"}"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

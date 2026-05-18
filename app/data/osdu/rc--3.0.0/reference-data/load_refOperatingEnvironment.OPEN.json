@@ -1,0 +1,37 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--OperatingEnvironment:Off",
+            "kind": "osdu:wks:reference-data--OperatingEnvironment:1.0.0",
+            "data": {
+                "Name": "Off",
+                "Code": "Off"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--OperatingEnvironment:On",
+            "kind": "osdu:wks:reference-data--OperatingEnvironment:1.0.0",
+            "data": {
+                "Name": "On",
+                "Code": "On"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

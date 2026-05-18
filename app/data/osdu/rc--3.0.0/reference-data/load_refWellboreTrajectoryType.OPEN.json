@@ -1,0 +1,22 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--WellboreTrajectoryType:Deviated",
+            "kind": "osdu:wks:reference-data--WellboreTrajectoryType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Deviated",
+                "Code": "Deviated"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}

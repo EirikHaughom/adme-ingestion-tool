@@ -1,0 +1,73 @@
+{
+    "kind": "osdu:wks:Manifest:1.0.0",
+    "ReferenceData": [
+        {
+            "id": "osdu:reference-data--AliasNameType:Borehole",
+            "kind": "osdu:wks:reference-data--AliasNameType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Borehole",
+                "Code": "Borehole"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--AliasNameType:BoreholeCode",
+            "kind": "osdu:wks:reference-data--AliasNameType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Borehole Code",
+                "Code": "BoreholeCode"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--AliasNameType:UWI",
+            "kind": "osdu:wks:reference-data--AliasNameType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "UWI",
+                "Code": "UWI"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        },
+        {
+            "id": "osdu:reference-data--AliasNameType:Well",
+            "kind": "osdu:wks:reference-data--AliasNameType:1.0.0",
+            "data": {
+                "Source": "TNO",
+                "Name": "Well",
+                "Code": "Well"
+            },
+            "acl": {
+                "owners": [],
+                "viewers": []
+            },
+            "legal": {
+                "legaltags": [],
+                "otherRelevantDataCountries": []
+            }
+        }
+    ]
+}
