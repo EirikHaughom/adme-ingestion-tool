@@ -29,7 +29,10 @@ from app.services.entitlements import (  # noqa: E402
     fetch_groups,
     fetch_my_groups,
 )
-from app.services.token_utils import extract_object_id  # noqa: E402
+from app.services.token_utils import (  # noqa: E402
+    extract_first_string_claim,
+    extract_object_id,
+)
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 
@@ -44,6 +47,7 @@ HISTORY_DISPLAY_LIMIT = 20
 # series name so different operators' charts stay readable.
 _MY_GROUPS_LABEL_PATTERN = r"^members\..*\.groups$"
 _MY_GROUPS_DISPLAY_LABEL = "my groups"
+_SERVICE_PRINCIPAL_MEMBER_CLAIMS = ("appid", "azp", "oid")
 
 
 def main() -> None:
@@ -81,12 +85,9 @@ def main() -> None:
     if should_run:
         token = _acquire_token(connection)
         if token is not None:
-            object_id = extract_object_id(token)
-            if object_id is None:
-                st.error(
-                    "Could not read your Object ID from the access token. "
-                    "Sign out and sign back in on the Instance Configuration page."
-                )
+            member_id = _resolve_member_id(connection, token)
+            if member_id is None:
+                st.error(_missing_member_id_message(connection))
                 st.page_link(
                     SETTINGS_PAGE_PATH,
                     label="Open Instance Configuration",
@@ -94,14 +95,14 @@ def main() -> None:
                 )
                 st.session_state[AUTORUN_KEY] = True
             else:
-                _run_entitlements_calls(connection, token, object_id)
+                _run_entitlements_calls(connection, token, member_id)
                 st.session_state[AUTORUN_KEY] = True
 
     _render_identity_card(st.session_state.get(LAST_MY_GROUPS_KEY))
     _render_my_groups_card(st.session_state.get(LAST_MY_GROUPS_KEY))
 
     with st.expander(
-        "📚 All groups in this partition (admin view)",
+        "📚 Groups accessible to this token",
         expanded=False,
     ):
         _render_all_groups_card(st.session_state.get(LAST_GROUPS_KEY))
@@ -180,14 +181,38 @@ def _acquire_token(connection: ADMEConnection) -> str | None:
         return None
 
 
+def _resolve_member_id(connection: ADMEConnection, token: str) -> str | None:
+    """Return the Entitlements member identifier for this auth method."""
+    if connection.auth_method == AuthMethod.SERVICE_PRINCIPAL:
+        return (
+            extract_first_string_claim(token, _SERVICE_PRINCIPAL_MEMBER_CLAIMS)
+            or connection.client_id.strip()
+            or None
+        )
+    return extract_object_id(token)
+
+
+def _missing_member_id_message(connection: ADMEConnection) -> str:
+    if connection.auth_method == AuthMethod.SERVICE_PRINCIPAL:
+        return (
+            "Could not determine the service-principal member identifier from "
+            "the access token or saved client ID. Open Instance Configuration "
+            "to verify the service-principal configuration."
+        )
+    return (
+        "Could not read your Object ID from the access token. Sign out and "
+        "sign back in on the Instance Configuration page."
+    )
+
+
 def _run_entitlements_calls(
     connection: ADMEConnection,
     token: str,
-    object_id: str,
+    member_id: str,
 ) -> None:
     """Call both entitlements endpoints sequentially and append history."""
     with st.spinner("Calling entitlements API…"):
-        my_groups_result = fetch_my_groups(connection, token, object_id)
+        my_groups_result = fetch_my_groups(connection, token, member_id)
         _append_history(my_groups_result)
         st.session_state[LAST_MY_GROUPS_KEY] = my_groups_result
 
@@ -258,14 +283,14 @@ def _render_my_groups_card(result: EntitlementsCallResult | None) -> None:
 
 
 def _render_all_groups_card(result: EntitlementsCallResult | None) -> None:
-    """Render the secondary 'all groups in partition' card."""
+    """Render the secondary caller-accessible groups card."""
     if result is None:
         st.caption("Run the entitlements test to see results.")
         return
 
     if result.ok:
         groups = _extract_groups(result.data)
-        st.success(f"✅ Retrieved {len(groups)} groups")
+        st.success(f"✅ Retrieved {len(groups)} groups accessible to this token")
         if groups:
             st.dataframe(
                 _groups_to_table_rows(groups),
@@ -278,7 +303,7 @@ def _render_all_groups_card(result: EntitlementsCallResult | None) -> None:
             st.json(result.raw_response or result.data or {})
         return
 
-    _render_error_block(result, "All-groups call failed")
+    _render_error_block(result, "Caller-accessible groups call failed")
 
 
 def _render_error_block(
@@ -367,6 +392,8 @@ def _render_history() -> None:
         st.session_state[HISTORY_KEY] = []
         st.session_state[LAST_MY_GROUPS_KEY] = None
         st.session_state[LAST_GROUPS_KEY] = None
+        st.session_state[AUTORUN_KEY] = True
+        st.rerun()
 
 
 def _history_to_chart_frame(history: list[dict[str, Any]]) -> pd.DataFrame:

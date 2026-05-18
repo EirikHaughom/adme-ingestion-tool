@@ -74,6 +74,16 @@ def _isolate_settings_db(
     return target
 
 
+@pytest.fixture(autouse=True)
+def _isolate_storage_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Route default persistent storage to a per-test SQLite database."""
+    database_path = tmp_path / "adme-test.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+
+
 @pytest.fixture
 def app_title() -> str:
     """Return the expected application title."""
