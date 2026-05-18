@@ -97,7 +97,40 @@ Charlie (Tester) owns test strategy, acceptance criteria, and quality gates for 
 
 **Archived work:** Issues #2–#7 (auth architecture, browser login, callback fix, tenant auth, redirect). Issue #8 (MSAL integration) and manual token scope completed 2026-05-05. See history-archive.md for full details.
 
-## 2026-05-05: Persistent Storage Verification Plan (Current)
+## 2026-05-15T10:52:00Z: Bulk Load CSV Generation (#17) + Abort (#31) Test Coverage
+
+**Status:** TESTS WRITTEN — 34 new tests added, 39/43 pass, 4 abort tests expected-fail (implementation pending Judson).
+
+**What was added:**
+- `tests/test_bulk_load_page.py`: 34 new tests across 7 test classes covering the CSV-generation tab workflow and abort-button behavior.
+- `tests/support/streamlit_recorder.py`: Added `tabs()`, `progress()`, and `StreamlitProgressMock` to support the new page primitives (`st.tabs`, `st.progress` with `.progress()` updates).
+
+**CSV generation tab coverage (Issue #17) — 28 tests, all passing:**
+- `TestCSVGenerationKindPicker` (2): kind selectbox populated from `list_schema_kinds`; empty-schemas warning.
+- `TestCSVUpload` (2): CSV bytes stored in `GEN_CSV_DATA_KEY`; new CSV resets downstream mapping/manifests.
+- `TestCSVAutoMap` (4): auto_map called when kind+CSV present; skipped when no CSV or no kind; cached mapping skips re-call.
+- `TestCSVMappingOverride` (5): selectbox per schema field; (unmapped)+headers in options; confidence % indicator; low-confidence warning; unmapped-required-fields warning.
+- `TestCSVGenerate` (4): disabled without mappings; disabled without legal tag; disabled without ACL owners; calls `generate_manifests` with confirmed mappings on click.
+- `TestCSVManifestPreview` (3): count summary after generate; Submit button renders when manifests exist; Submit disabled when no manifests.
+- `TestCSVSubmit` (3): calls `submit_manifest` per manifest; stores results in session state; progress bar updates during loop.
+- `TestCSVErrorHandling` (5): empty CSV parse error; SchemaNotFoundError; generate failure sticky error; submit_manifest failure captured; results section renders mixed summary.
+
+**Abort button coverage (Issue #31) — 6 tests, 4 expected-fail:**
+- `TestAbortRegisteredDatasets` (3): flag stops loop early; partial results preserved; abort message displayed. First and third FAIL (loop runs to completion — no abort check implemented yet). Second passes (partial results trivially preserved since loop completes).
+- `TestAbortCSVGeneration` (3): flag stops CSV submit early; partial results preserved; abort message displayed. Same pattern — first and third FAIL.
+
+**Key session-state keys tested against (locked by page module):**
+- `gen_kind`, `gen_csv_data`, `gen_mapping_result`, `gen_confirmed_mappings`, `gen_manifests`, `gen_submit_results`, `gen_legal_tag`, `gen_acl_owners`, `gen_acl_viewers`, `gen_last_error`
+- Abort keys (proposed for Judson): `bulk_abort_requested`, `gen_abort_requested`
+
+## Learnings
+
+- **`or` vs `is not None` for falsy defaults in test helpers.** `kinds or _DEFAULT` evaluates `[]` as falsy and returns the default. When a test explicitly passes `kinds=[]`, use `kinds if kinds is not None else _DEFAULT`. Caught this causing test_no_schemas_shows_warning to pass wrong data.
+- **Recorder `selectbox` reads `widget_values[label]`, not `session_state[key]`.** Page widgets with `key=...` in real Streamlit sync session_state ↔ widget value automatically. In the recorder they are decoupled. Tests MUST set both `session_state[key]` (for the page's session-state reads) and `widget_values[label]` (for the recorder's selectbox return value). The `_setup_csv_tab_session` helper now does both.
+- **`st.tabs` and `st.progress` needed explicit recorder support.** The `__getattr__` fallback returns `None`, which breaks `tab_a, tab_b = st.tabs(...)` (can't unpack None) and `bar = st.progress(0); bar.progress(0.5)` (AttributeError on None). Added `tabs()` → list of `StreamlitContext`, and `progress()` → `StreamlitProgressMock` with `.progress()` updates.
+- **Abort tests are intentionally red gates.** Writing tests before implementation (test-first for #31) makes the acceptance criteria concrete and machine-verifiable. When Judson wires up the abort check, these 4 tests turn green with zero reviewer effort.
+
+
 
 **Status:** PLANNING COMPLETE, SYNTHESIZED WITH TEAM
 
@@ -241,3 +274,5 @@ Charlie (Tester) owns test strategy, acceptance criteria, and quality gates for 
 - Strengthened storage repository coverage with a raw SQLite file bytes assertion proving the rejected service-principal `client_secret` value is absent after a persistence attempt; kept the existing bridge-level raw bytes check for stripped session-only values.
 - Kept the local SQLAlchemy/Alembic storage boundary; did not port PR #9 sqlite3 settings store, ADME_SETTINGS_DB, keyring, or connection_state coupling.
 - Validation: focused storage tests passed; full pytest passed; touched-file Ruff and full mypy passed. Full repository Ruff remains blocked by pre-existing issues outside this change.
+- 2026-05-15: Wave 3 (#26/#27) search page test repair. Five test-side label constants were stale relative to the shipped UI in pp/pages/7_🔍_Search.py. Fixed by aligning constants to the verbatim widget labels: Kind filter (multiselect), Aggregate by kind (checkbox), Add clause (button), Combinator (radio), Schema kind (selectbox — already correct). Rule of thumb: recorder.multiselect/checkbox/radio look up widget_values[label] only — they do NOT honor session_state[key]. Tests that bind via key= MUST set widget_values[<exact_label>]. When the UI changes a widget label, search tests/test_search_page.py for the literal string before grepping by session_state key.
+- 2026-05-15: For Add/Remove handlers that call st.rerun() (page issue #27 Query Builder), the recorder's st.rerun() is a no-op — assertions must reflect ONE click = ONE mutation, not the rerun-driven steady state. Don't write tests that depend on st.rerun() actually re-executing the page.

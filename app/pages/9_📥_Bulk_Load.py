@@ -9,11 +9,17 @@ The page enforces a mandatory **Preview gate**: the Submit button stays
 disabled until the operator has clicked Preview for the current dataset/tier
 combination. Changing dataset or tier invalidates the gate so the operator
 can never submit a payload they didn't first inspect.
+
+The **Generate from CSV** tab lets operators pick an OSDU kind, upload a
+CSV, review/adjust the auto-mapped column-to-field mapping, and generate +
+submit manifests without hand-authoring JSON templates.
 """
 
 from __future__ import annotations
 
+import io
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +41,10 @@ from app.models.connection import (  # noqa: E402
 )
 from app.models.osdu import (  # noqa: E402
     DatasetDescriptor,
+    FieldMapping,
     ManifestPreview,
+    MappingResult,
+    SchemaField,
     SubmitResult,
 )
 from app.services.auth import AuthenticationError, get_token  # noqa: E402
@@ -47,7 +56,17 @@ from app.services.bulk_loader import (  # noqa: E402
     submit_tier,
 )
 from app.services.entitlements import fetch_groups  # noqa: E402
+from app.services.ingestion import submit_manifest  # noqa: E402
 from app.services.legal_tags import list_legal_tags  # noqa: E402
+from app.services.manifest_generator import (  # noqa: E402
+    MappingError,
+    SchemaNotFoundError,
+    auto_map,
+    extract_schema_fields,
+    generate_manifests,
+    list_schema_kinds,
+    load_schema,
+)
 
 SETTINGS_PAGE_PATH = "pages/1_⚙️_Instance_Configuration.py"
 
@@ -61,6 +80,26 @@ BULK_PREVIEW_SEEN_KEY = "bulk_preview_seen"  # tuple[str, str] | None
 BULK_PREVIEW_RESULTS_KEY = "bulk_preview_results"  # list[ManifestPreview]
 BULK_SUBMIT_RESULTS_KEY = "bulk_submit_results"  # list[SubmitResult]
 BULK_LAST_ERROR_KEY = "bulk_last_error"  # str | None
+BULK_ABORT_KEY = "bulk_abort_requested"  # bool — graceful mid-loop stop
+
+# --- Generate-from-CSV session-state keys (prefixed gen_) ----------------
+GEN_KIND_KEY = "gen_kind"
+GEN_CSV_DATA_KEY = "gen_csv_data"
+GEN_MAPPING_RESULT_KEY = "gen_mapping_result"
+GEN_CONFIRMED_MAPPINGS_KEY = "gen_confirmed_mappings"
+GEN_MANIFESTS_KEY = "gen_manifests"
+GEN_SUBMIT_RESULTS_KEY = "gen_submit_results"
+GEN_LEGAL_TAG_KEY = "gen_legal_tag"
+GEN_ACL_OWNERS_KEY = "gen_acl_owners"
+GEN_ACL_VIEWERS_KEY = "gen_acl_viewers"
+GEN_LAST_ERROR_KEY = "gen_last_error"
+GEN_ABORT_KEY = "gen_abort_requested"  # bool — graceful mid-loop stop (CSV tab)
+
+# --- Internal helper keys for CSV-gen options ----------------------------
+GEN_OPTIONS_AUTORUN_KEY = "gen_options_autorun_done"
+GEN_LEGAL_TAG_OPTIONS_KEY = "gen_legal_tag_options"
+GEN_ACL_OWNER_OPTIONS_KEY = "gen_acl_owner_options"
+GEN_ACL_VIEWER_OPTIONS_KEY = "gen_acl_viewer_options"
 
 # --- Internal helper keys (not part of the locked contract) --------------
 BULK_OPTIONS_AUTORUN_KEY = "bulk_options_autorun_done"
@@ -84,8 +123,8 @@ def main() -> None:
     st.title("📥 Bulk Load")
     st.markdown(
         "Submit a registered OSDU dataset (reference-data, master-data, or "
-        "work-products) to your ADME instance. **v1 supports reference-data "
-        "only.**"
+        "work-products) to your ADME instance, or generate manifests from a "
+        "CSV file. **v1 supports reference-data only.**"
     )
 
     ensure_session_defaults(st.session_state)
@@ -105,6 +144,19 @@ def main() -> None:
         f"Endpoint: `{connection.endpoint}`"
     )
 
+    tab_datasets, tab_csv = st.tabs(
+        ["📦 Registered Datasets", "📄 Generate from CSV"]
+    )
+
+    with tab_datasets:
+        _render_registered_datasets_tab(connection)
+
+    with tab_csv:
+        _render_csv_generation_tab(connection)
+
+
+def _render_registered_datasets_tab(connection: ADMEConnection) -> None:
+    """Render the original Registered Datasets workflow."""
     _render_sticky_error()
 
     datasets = list_datasets()
@@ -157,11 +209,29 @@ def _ensure_page_defaults() -> None:
     st.session_state.setdefault(BULK_PREVIEW_RESULTS_KEY, [])
     st.session_state.setdefault(BULK_SUBMIT_RESULTS_KEY, [])
     st.session_state.setdefault(BULK_LAST_ERROR_KEY, None)
+    st.session_state.setdefault(BULK_ABORT_KEY, False)
 
     st.session_state.setdefault(BULK_OPTIONS_AUTORUN_KEY, False)
     st.session_state.setdefault(BULK_LEGAL_TAG_OPTIONS_KEY, None)
     st.session_state.setdefault(BULK_ACL_OWNER_OPTIONS_KEY, None)
     st.session_state.setdefault(BULK_ACL_VIEWER_OPTIONS_KEY, None)
+
+    # Generate-from-CSV defaults
+    st.session_state.setdefault(GEN_KIND_KEY, "")
+    st.session_state.setdefault(GEN_CSV_DATA_KEY, None)
+    st.session_state.setdefault(GEN_MAPPING_RESULT_KEY, None)
+    st.session_state.setdefault(GEN_CONFIRMED_MAPPINGS_KEY, None)
+    st.session_state.setdefault(GEN_MANIFESTS_KEY, None)
+    st.session_state.setdefault(GEN_SUBMIT_RESULTS_KEY, [])
+    st.session_state.setdefault(GEN_LEGAL_TAG_KEY, "")
+    st.session_state.setdefault(GEN_ACL_OWNERS_KEY, "")
+    st.session_state.setdefault(GEN_ACL_VIEWERS_KEY, "")
+    st.session_state.setdefault(GEN_LAST_ERROR_KEY, None)
+    st.session_state.setdefault(GEN_ABORT_KEY, False)
+    st.session_state.setdefault(GEN_OPTIONS_AUTORUN_KEY, False)
+    st.session_state.setdefault(GEN_LEGAL_TAG_OPTIONS_KEY, None)
+    st.session_state.setdefault(GEN_ACL_OWNER_OPTIONS_KEY, None)
+    st.session_state.setdefault(GEN_ACL_VIEWER_OPTIONS_KEY, None)
 
 
 # ---------------------------------------------------------------------------
@@ -617,17 +687,20 @@ def _render_submit_section(
     if is_disabled and disabled_reason is not None:
         st.caption(f"⏸️ {disabled_reason}")
 
-    # TODO(judson): Add a mid-loop abort button once Streamlit's reactive
-    # model has a cleaner cancellation primitive. For v1 the loop runs to
-    # completion — to stop, close the browser tab.
-    st.caption(
-        "Submission runs to completion — to stop, close the browser tab."
-    )
-
     if not clicked:
         return
 
     _run_submit(connection, descriptor, tier_name)
+
+
+def _set_bulk_abort() -> None:
+    """``on_click`` callback — sets the graceful abort flag."""
+    st.session_state[BULK_ABORT_KEY] = True
+
+
+def _set_gen_abort() -> None:
+    """``on_click`` callback — sets the graceful abort flag (CSV tab)."""
+    st.session_state[GEN_ABORT_KEY] = True
 
 
 def _run_submit(
@@ -656,7 +729,14 @@ def _run_submit(
     results: list[SubmitResult] = []
 
     st.write(f"Submitting {total} manifest(s)…")
+    st.button(
+        "⏹️ Abort",
+        key="bulk_abort_btn",
+        on_click=_set_bulk_abort,
+        help="Stop after the current manifest finishes.",
+    )
 
+    aborted = False
     try:
         iterator = submit_tier(
             descriptor.id,
@@ -670,10 +750,16 @@ def _run_submit(
         )
         for index, result in enumerate(iterator, start=1):
             results.append(result)
+            st.session_state[BULK_SUBMIT_RESULTS_KEY] = list(results)
             st.write(
                 f"**{index} of {total}** — `{result.filename}`"
             )
             _render_submit_row(result)
+
+            # Graceful abort: finish current HTTP call, skip remaining.
+            if st.session_state.get(BULK_ABORT_KEY):
+                aborted = True
+                break
     except ValueError as exc:
         _set_sticky_error(f"Submit aborted: {exc}")
         st.session_state[BULK_SUBMIT_RESULTS_KEY] = results
@@ -688,6 +774,10 @@ def _run_submit(
         return
 
     st.session_state[BULK_SUBMIT_RESULTS_KEY] = results
+    if aborted:
+        st.warning(
+            f"⏹️ Aborted after {len(results)} of {total} manifests."
+        )
 
 
 def _render_submit_row(result: SubmitResult) -> None:
@@ -713,6 +803,18 @@ def _render_results_section() -> None:
     failed = len(results) - succeeded
 
     st.subheader("Submit results")
+
+    # Show abort indicator when results are partial.
+    if st.session_state.get(BULK_ABORT_KEY):
+        previews_for_abort: list[ManifestPreview] = st.session_state.get(
+            BULK_PREVIEW_RESULTS_KEY, []
+        )
+        if previews_for_abort and len(results) < len(previews_for_abort):
+            st.warning(
+                f"⏹️ Aborted after {len(results)} of "
+                f"{len(previews_for_abort)} manifests."
+            )
+
     summary = f"{succeeded} of {len(results)} succeeded"
     if failed == 0:
         st.success(summary)
@@ -735,6 +837,504 @@ def _render_results_section() -> None:
         ]
     )
     st.dataframe(frame, use_container_width=True, hide_index=True)
+
+
+# ===========================================================================
+# Generate from CSV tab
+# ===========================================================================
+
+
+def _render_csv_generation_tab(connection: ADMEConnection) -> None:
+    """Render the Generate from CSV workflow."""
+    _render_gen_sticky_error()
+
+    # --- Step 1: Kind selector ---
+    kinds = list_schema_kinds()
+    if not kinds:
+        st.warning(
+            "No vendored schemas found. Check that "
+            "`app/data/osdu/rc--3.0.0/schemas/` contains schema JSON files."
+        )
+        return
+
+    selected_kind = st.selectbox(
+        "OSDU kind",
+        options=[""] + kinds,
+        key=GEN_KIND_KEY,
+        help="Select the OSDU kind that matches your CSV data.",
+    )
+
+    if not selected_kind:
+        st.info("Select an OSDU kind to begin.")
+        return
+
+    # --- Step 2: CSV upload ---
+    uploaded_file = st.file_uploader(
+        "Upload CSV",
+        type=["csv"],
+        key="gen_csv_uploader",
+        help="Upload the CSV file containing the data to ingest.",
+    )
+
+    if uploaded_file is not None:
+        csv_bytes = uploaded_file.getvalue()
+        # Reset downstream state when CSV changes
+        prev_csv = st.session_state.get(GEN_CSV_DATA_KEY)
+        if prev_csv != csv_bytes:
+            st.session_state[GEN_CSV_DATA_KEY] = csv_bytes
+            st.session_state[GEN_MAPPING_RESULT_KEY] = None
+            st.session_state[GEN_CONFIRMED_MAPPINGS_KEY] = None
+            st.session_state[GEN_MANIFESTS_KEY] = None
+            st.session_state[GEN_SUBMIT_RESULTS_KEY] = []
+
+    csv_data: bytes | None = st.session_state.get(GEN_CSV_DATA_KEY)
+    if csv_data is None:
+        st.info("Upload a CSV file to continue.")
+        return
+
+    # --- Step 3: Auto-map ---
+    try:
+        csv_headers = _parse_csv_headers(csv_data)
+    except ValueError as exc:
+        st.error(f"Could not parse CSV headers: {exc}")
+        return
+
+    mapping_result: MappingResult | None = st.session_state.get(
+        GEN_MAPPING_RESULT_KEY
+    )
+    if mapping_result is None:
+        try:
+            schema = load_schema(selected_kind)
+            schema_fields = extract_schema_fields(schema)
+            mapping_result = auto_map(schema_fields, csv_headers)
+            st.session_state[GEN_MAPPING_RESULT_KEY] = mapping_result
+        except SchemaNotFoundError as exc:
+            st.error(f"Schema not available: {exc}")
+            return
+
+    # --- Step 4: Editable mapping table ---
+    st.subheader("Column mapping")
+    confidence_pct = int(mapping_result.confidence * 100)
+    if confidence_pct >= 80:
+        st.success(f"Auto-map confidence: **{confidence_pct}%**")
+    elif confidence_pct >= 50:
+        st.warning(f"Auto-map confidence: **{confidence_pct}%** — review suggested")
+    else:
+        st.error(
+            f"Auto-map confidence: **{confidence_pct}%** — "
+            "manual adjustment recommended"
+        )
+
+    schema = load_schema(selected_kind)
+    schema_fields = extract_schema_fields(schema)
+    field_options = ["(unmapped)"] + csv_headers
+
+    confirmed: list[FieldMapping] = []
+    for sf in schema_fields:
+        # Find current mapping for this field
+        current_csv_col = "(unmapped)"
+        for m in mapping_result.mappings:
+            if m.schema_path == sf.path:
+                current_csv_col = m.csv_header
+                break
+
+        default_index = 0
+        if current_csv_col in field_options:
+            default_index = field_options.index(current_csv_col)
+
+        req_marker = " ⚠️" if sf.required else ""
+        chosen = st.selectbox(
+            f"{sf.path} ({sf.field_type}){req_marker}",
+            options=field_options,
+            index=default_index,
+            key=f"gen_map_{sf.path}",
+            help=sf.description or f"Schema field: {sf.path}",
+        )
+        if chosen != "(unmapped)":
+            confirmed.append(
+                FieldMapping(csv_header=chosen, schema_path=sf.path)
+            )
+
+    st.session_state[GEN_CONFIRMED_MAPPINGS_KEY] = confirmed
+
+    if mapping_result.unmatched_required:
+        # Check which required fields are still unmapped after operator edits
+        mapped_paths = {m.schema_path for m in confirmed}
+        still_unmapped = [
+            r for r in mapping_result.unmatched_required
+            if r not in mapped_paths
+        ]
+        if still_unmapped:
+            st.warning(
+                f"**{len(still_unmapped)} required field(s) unmapped:** "
+                + ", ".join(f"`{f}`" for f in still_unmapped)
+            )
+
+    if mapping_result.unmatched_csv:
+        with st.expander("Unmatched CSV columns", expanded=False):
+            for col in mapping_result.unmatched_csv:
+                st.caption(f"• {col}")
+
+    # --- Step 5: Legal tag + ACL ---
+    st.subheader("Legal & ACL")
+    _render_gen_input_form(connection)
+
+    # --- Step 6: Generate manifests ---
+    gen_disabled_reason = _gen_generate_disabled_reason(confirmed)
+    gen_is_disabled = gen_disabled_reason is not None
+
+    gen_clicked = st.button(
+        "📄 Generate Manifests",
+        key="gen_generate_button",
+        disabled=gen_is_disabled,
+        help="Generate OSDU manifests from the CSV using the confirmed mapping.",
+    )
+    if gen_is_disabled and gen_disabled_reason:
+        st.caption(f"⏸️ {gen_disabled_reason}")
+
+    if gen_clicked:
+        _run_generate(selected_kind, csv_data, confirmed, connection)
+
+    # --- Step 7: Summary + Submit ---
+    manifests: list[dict] | None = st.session_state.get(GEN_MANIFESTS_KEY)
+    if manifests:
+        st.subheader("Generated manifests")
+        st.success(
+            f"**{len(manifests)} manifest(s)** generated and ready to submit."
+        )
+        with st.expander(
+            f"📋 Sample manifest (1 of {len(manifests)})", expanded=False
+        ):
+            st.json(manifests[0])
+
+        submit_disabled_reason = _gen_submit_disabled_reason()
+        submit_is_disabled = submit_disabled_reason is not None
+
+        submit_clicked = st.button(
+            "🚀 Submit generated manifests",
+            key="gen_submit_button",
+            type="primary",
+            disabled=submit_is_disabled,
+            help="Submit all generated manifests to the ADME ingestion pipeline.",
+        )
+        if submit_is_disabled and submit_disabled_reason:
+            st.caption(f"⏸️ {submit_disabled_reason}")
+
+        if submit_clicked:
+            _run_gen_submit(connection, manifests)
+
+    # --- Step 8: Submission results ---
+    _render_gen_results_section()
+
+
+# ---------------------------------------------------------------------------
+# CSV generation helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_csv_headers(csv_bytes: bytes) -> list[str]:
+    """Extract header row from CSV bytes. Raises ValueError if empty."""
+    text = csv_bytes.decode("utf-8-sig")
+    reader = io.StringIO(text)
+    try:
+        headers = next(iter(__import__("csv").reader(reader)))
+    except StopIteration:
+        raise ValueError("CSV file is empty — no header row found.")
+    if not headers or all(h.strip() == "" for h in headers):
+        raise ValueError("Upload a CSV with headers.")
+    return [h.strip() for h in headers]
+
+
+def _gen_generate_disabled_reason(
+    confirmed: list[FieldMapping],
+) -> str | None:
+    """Return a reason the Generate button is disabled, or None."""
+    if not confirmed:
+        return "Map at least one CSV column to a schema field."
+    legal = str(st.session_state.get(GEN_LEGAL_TAG_KEY) or "").strip()
+    if not legal:
+        return "Select a legal tag."
+    owners = str(st.session_state.get(GEN_ACL_OWNERS_KEY) or "").strip()
+    if not owners:
+        return "Fill ACL owners group."
+    viewers = str(st.session_state.get(GEN_ACL_VIEWERS_KEY) or "").strip()
+    if not viewers:
+        return "Fill ACL viewers group."
+    return None
+
+
+def _gen_submit_disabled_reason() -> str | None:
+    """Return a reason the Submit button is disabled, or None."""
+    legal = str(st.session_state.get(GEN_LEGAL_TAG_KEY) or "").strip()
+    if not legal:
+        return "Select a legal tag."
+    owners = str(st.session_state.get(GEN_ACL_OWNERS_KEY) or "").strip()
+    if not owners:
+        return "Fill ACL owners group."
+    viewers = str(st.session_state.get(GEN_ACL_VIEWERS_KEY) or "").strip()
+    if not viewers:
+        return "Fill ACL viewers group."
+    manifests = st.session_state.get(GEN_MANIFESTS_KEY)
+    if not manifests:
+        return "Generate manifests first."
+    return None
+
+
+def _run_generate(
+    kind: str,
+    csv_data: bytes,
+    mapping: list[FieldMapping],
+    connection: ADMEConnection,
+) -> None:
+    """Run generate_manifests and store results in session state."""
+    _clear_gen_sticky_error()
+    legal_tag = str(st.session_state.get(GEN_LEGAL_TAG_KEY) or "").strip()
+    acl_owners = str(st.session_state.get(GEN_ACL_OWNERS_KEY) or "").strip()
+    acl_viewers = str(st.session_state.get(GEN_ACL_VIEWERS_KEY) or "").strip()
+
+    try:
+        # Write CSV bytes to a temp file for generate_manifests
+        with tempfile.NamedTemporaryFile(
+            suffix=".csv", delete=False, mode="wb"
+        ) as tmp:
+            tmp.write(csv_data)
+            tmp_path = Path(tmp.name)
+
+        manifests = generate_manifests(
+            kind=kind,
+            csv_path=tmp_path,
+            mapping=mapping,
+            legal_tag=legal_tag,
+            acl_owners=acl_owners,
+            acl_viewers=acl_viewers,
+            data_partition_id=connection.data_partition_id,
+        )
+        st.session_state[GEN_MANIFESTS_KEY] = manifests
+        st.session_state[GEN_SUBMIT_RESULTS_KEY] = []
+    except SchemaNotFoundError as exc:
+        _set_gen_sticky_error(f"Schema not available: {exc}")
+        st.rerun()
+    except MappingError as exc:
+        _set_gen_sticky_error(f"Mapping error: {exc}")
+        st.rerun()
+    except ValueError as exc:
+        _set_gen_sticky_error(f"Generation error: {exc}")
+        st.rerun()
+    except Exception as exc:  # noqa: BLE001 - operator-safe summary
+        _set_gen_sticky_error(
+            f"Unexpected error: {type(exc).__name__}: {exc}"
+        )
+        st.rerun()
+    finally:
+        # Clean up temp file
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _run_gen_submit(
+    connection: ADMEConnection,
+    manifests: list[dict],
+) -> None:
+    """Submit each generated manifest via the ingestion pipeline."""
+    _clear_gen_sticky_error()
+    token = _acquire_token(connection)
+    if token is None:
+        return
+
+    total = len(manifests)
+    results: list[dict[str, Any]] = []
+
+    progress_bar = st.progress(0.0, text="Submitting manifests…")
+    st.button(
+        "⏹️ Abort",
+        key="gen_abort_btn",
+        on_click=_set_gen_abort,
+        help="Stop after the current manifest finishes.",
+    )
+
+    aborted = False
+    for index, manifest in enumerate(manifests, start=1):
+        try:
+            run_result = submit_manifest(connection, token, manifest)
+            results.append(
+                {
+                    "index": index,
+                    "ok": run_result.ok,
+                    "run_id": run_result.run_id or "",
+                    "error": run_result.error_message or "",
+                }
+            )
+            status_icon = "✅" if run_result.ok else "❌"
+            st.write(
+                f"**{index}/{total}** {status_icon} "
+                f"runId: `{run_result.run_id or '(none)'}`"
+            )
+        except Exception as exc:  # noqa: BLE001
+            results.append(
+                {
+                    "index": index,
+                    "ok": False,
+                    "run_id": "",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            st.write(f"**{index}/{total}** ❌ {type(exc).__name__}: {exc}")
+        progress_bar.progress(index / total, text=f"Submitted {index}/{total}")
+        st.session_state[GEN_SUBMIT_RESULTS_KEY] = list(results)
+
+        # Graceful abort: finish current HTTP call, skip remaining.
+        if st.session_state.get(GEN_ABORT_KEY):
+            aborted = True
+            break
+
+    st.session_state[GEN_SUBMIT_RESULTS_KEY] = results
+    if aborted:
+        st.warning(
+            f"⏹️ Aborted after {len(results)} of {total} manifests."
+        )
+
+
+def _render_gen_results_section() -> None:
+    """Render persistent summary of the last CSV-generated submission."""
+    results: list[dict[str, Any]] = st.session_state.get(
+        GEN_SUBMIT_RESULTS_KEY, []
+    )
+    if not results:
+        return
+
+    succeeded = sum(1 for r in results if r.get("ok"))
+    failed = len(results) - succeeded
+
+    st.subheader("Submission results")
+
+    # Show abort indicator when results are partial.
+    if st.session_state.get(GEN_ABORT_KEY):
+        gen_manifests: list[dict] | None = st.session_state.get(GEN_MANIFESTS_KEY)
+        if gen_manifests and len(results) < len(gen_manifests):
+            st.warning(
+                f"⏹️ Aborted after {len(results)} of "
+                f"{len(gen_manifests)} manifests."
+            )
+
+    summary = f"{succeeded} of {len(results)} succeeded"
+    if failed == 0:
+        st.success(summary)
+    else:
+        st.warning(f"{summary} — {failed} failed.")
+
+    frame = pd.DataFrame(results)
+    st.dataframe(frame, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# CSV-gen sticky errors
+# ---------------------------------------------------------------------------
+
+
+def _set_gen_sticky_error(message: str) -> None:
+    st.session_state[GEN_LAST_ERROR_KEY] = message
+
+
+def _clear_gen_sticky_error() -> None:
+    st.session_state[GEN_LAST_ERROR_KEY] = None
+
+
+def _render_gen_sticky_error() -> None:
+    message = st.session_state.get(GEN_LAST_ERROR_KEY)
+    if not message:
+        return
+    st.error(message)
+    if st.button("Dismiss error", key="gen_dismiss_error"):
+        _clear_gen_sticky_error()
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# CSV-gen input form (legal tag + ACL, mirrors bulk pattern)
+# ---------------------------------------------------------------------------
+
+
+def _render_gen_input_form(connection: ADMEConnection) -> None:
+    """Render legal-tag / ACL inputs for the CSV-gen flow."""
+    refresh_clicked = st.button(
+        "🔄 Refresh legal tags & groups",
+        key="gen_refresh_options",
+        help="Re-fetch legal tags and entitlement groups from ADME.",
+    )
+    if refresh_clicked:
+        _load_gen_input_options(connection, force=True)
+        st.rerun()
+    else:
+        _load_gen_input_options(connection)
+
+    legal_options = st.session_state.get(GEN_LEGAL_TAG_OPTIONS_KEY)
+    owner_options = st.session_state.get(GEN_ACL_OWNER_OPTIONS_KEY)
+    viewer_options = st.session_state.get(GEN_ACL_VIEWER_OPTIONS_KEY)
+
+    cols = st.columns(3)
+    with cols[0]:
+        _render_option_field(
+            label="Legal tag name",
+            session_key=GEN_LEGAL_TAG_KEY,
+            options=legal_options,
+            placeholder="opendes-tno-data",
+            help_text="Fully qualified legal tag applied to generated manifests.",
+            empty_caption="⚠️ Couldn't load legal tags — enter manually",
+        )
+    with cols[1]:
+        _render_option_field(
+            label="ACL owners group",
+            session_key=GEN_ACL_OWNERS_KEY,
+            options=owner_options,
+            placeholder="data.default.owners@opendes.dataservices.energy",
+            help_text="Entitlements group that should own these records.",
+            empty_caption="⚠️ Couldn't load groups — enter manually",
+        )
+    with cols[2]:
+        _render_option_field(
+            label="ACL viewers group",
+            session_key=GEN_ACL_VIEWERS_KEY,
+            options=viewer_options,
+            placeholder="data.default.viewers@opendes.dataservices.energy",
+            help_text="Entitlements group allowed to read these records.",
+            empty_caption="⚠️ Couldn't load groups — enter manually",
+        )
+
+
+def _load_gen_input_options(
+    connection: ADMEConnection, *, force: bool = False
+) -> None:
+    """Autorun-once load of legal tags + entitlement groups for gen dropdowns."""
+    if not force and st.session_state.get(GEN_OPTIONS_AUTORUN_KEY, False):
+        return
+
+    token = _acquire_token(connection)
+    if token is None:
+        st.session_state[GEN_OPTIONS_AUTORUN_KEY] = True
+        return
+
+    try:
+        legal_result = list_legal_tags(connection, token, valid=True)
+        if legal_result.ok and legal_result.items:
+            names = sorted({t.name for t in legal_result.items if t.name})
+            st.session_state[GEN_LEGAL_TAG_OPTIONS_KEY] = names or None
+        else:
+            st.session_state[GEN_LEGAL_TAG_OPTIONS_KEY] = None
+    except Exception:  # noqa: BLE001
+        st.session_state[GEN_LEGAL_TAG_OPTIONS_KEY] = None
+
+    try:
+        groups_result = fetch_groups(connection, token)
+        owners, viewers = _partition_acl_groups(groups_result)
+        st.session_state[GEN_ACL_OWNER_OPTIONS_KEY] = owners or None
+        st.session_state[GEN_ACL_VIEWER_OPTIONS_KEY] = viewers or None
+    except Exception:  # noqa: BLE001
+        st.session_state[GEN_ACL_OWNER_OPTIONS_KEY] = None
+        st.session_state[GEN_ACL_VIEWER_OPTIONS_KEY] = None
+
+    st.session_state[GEN_OPTIONS_AUTORUN_KEY] = True
 
 
 if __name__ == "__main__":

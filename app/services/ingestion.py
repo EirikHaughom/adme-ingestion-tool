@@ -30,7 +30,7 @@ from app.models.osdu import (
     WorkflowStatus,
     parse_workflow_status,
 )
-from app.services.legal_tags import LEGAL_TAGS_PATH
+from app.services.legal_tags import LEGAL_TAGS_PATH, LEGAL_TAG_VALIDATE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -337,11 +337,11 @@ def check_legal_tag(
     token: str,
     legal_tag_name: str,
 ) -> LegalTagCheckResult:
-    """Probe ``GET /api/legal/v1/legaltags/{name}``.
+    """Validate a legal tag via ``POST /api/legal/v1/legaltags:validate``.
 
-    Returns a :class:`LegalTagCheckResult`. 404 produces a curated
-    "not found in partition" message; other failures use the standard
-    error-body extraction. Transport failures return ``ok=False`` with
+    Returns a :class:`LegalTagCheckResult`. The validate endpoint returns
+    ``{"invalidLegalTags": [...]}``; the tag is valid when it does NOT
+    appear in that list. Transport failures return ``ok=False`` with
     ``http_status=None`` and never raise.
     """
     if not legal_tag_name or not legal_tag_name.strip():
@@ -350,14 +350,13 @@ def check_legal_tag(
             "legal-tag check."
         )
 
-    quoted_name = quote(legal_tag_name, safe="")
-    path = f"{LEGAL_TAGS_PATH}/{quoted_name}"
-
     parsed_body, http_status, correlation_id, latency_ms, error_message = (
         _call_legal(
             connection=connection,
             token=token,
-            path=path,
+            method="POST",
+            path=LEGAL_TAG_VALIDATE_PATH,
+            json_body={"names": [legal_tag_name]},
         )
     )
 
@@ -372,6 +371,25 @@ def check_legal_tag(
         )
 
     if 200 <= http_status < 300:
+        body = parsed_body if isinstance(parsed_body, dict) else {}
+        invalid_tags = body.get("invalidLegalTags", [])
+        invalid_names = [
+            entry.get("name") if isinstance(entry, dict) else entry
+            for entry in invalid_tags
+        ] if isinstance(invalid_tags, list) else []
+        if legal_tag_name in invalid_names:
+            friendly = (
+                f"Legal tag '{legal_tag_name}' is not valid in "
+                f"partition '{connection.data_partition_id}'."
+            )
+            return LegalTagCheckResult(
+                name=legal_tag_name,
+                ok=False,
+                http_status=http_status,
+                latency_ms=latency_ms,
+                correlation_id=correlation_id,
+                error_message=friendly,
+            )
         return LegalTagCheckResult(
             name=legal_tag_name,
             ok=True,
@@ -379,20 +397,6 @@ def check_legal_tag(
             latency_ms=latency_ms,
             correlation_id=correlation_id,
             error_message=None,
-        )
-
-    if http_status == 404:
-        friendly = (
-            f"Legal tag '{legal_tag_name}' not found in partition "
-            f"'{connection.data_partition_id}'."
-        )
-        return LegalTagCheckResult(
-            name=legal_tag_name,
-            ok=False,
-            http_status=http_status,
-            latency_ms=latency_ms,
-            correlation_id=correlation_id,
-            error_message=friendly,
         )
 
     return LegalTagCheckResult(
@@ -632,14 +636,17 @@ def _call_legal(
     connection: ADMEConnection,
     token: str,
     path: str,
+    *,
+    method: str = "GET",
+    json_body: dict | None = None,
 ) -> tuple[dict | str | None, int | None, str | None, float, str | None]:
-    """Shared HTTP wrapper for the legal service calls (GET only)."""
+    """Shared HTTP wrapper for legal service calls."""
     return _call(
         connection=connection,
         token=token,
-        method="GET",
+        method=method,
         path=path,
-        json_body=None,
+        json_body=json_body,
     )
 
 

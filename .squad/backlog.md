@@ -1,6 +1,6 @@
 # ADME Ingestion Tool — Backlog
 
-Maintained by Satya. Last updated: 2026-05-11 (post Manifest Builder v1 ship).
+Maintained by Satya. Last updated: 2026-05-15 (post manifest-generator ship + rebase onto merged PR #10).
 
 This document is the source of truth for what we're working on, what's next, and what's been deferred. `decisions.md` records *why* we decided what; this doc records *what* and *when*. When priorities change, update here first.
 
@@ -26,8 +26,14 @@ A cross-session list of past workflow runs (run id, kind, status, latency, when)
 
 ## Next
 
-### 2. Switch ingestion legal-tag pre-flight to `POST /legaltags:validate` — **XS** — owner: Kevin (Darryl review)
-Today the Ingestion page does `GET /legaltags/{name}` to confirm a tag exists before submitting a workflow. Darryl flagged that `POST /api/legal/v1/legaltags:validate` is the more correct call — it confirms the tag is *valid* (not just *present*) and returns the same shape the workflow service uses internally. Small, isolated change; do it before the next ingestion-touching feature ships.
+### 2. Wire "Generate from CSV" into Bulk Load page — **S/M** — owner: Judson + Kevin
+The `manifest_generator.py` service is built and tested (list_schema_kinds, extract_schema_fields, auto_map, generate_manifests). Wire it into the Bulk Load page as a "Generate from CSV" flow: operator picks an OSDU kind → uploads a CSV → reviews the auto-mapped columns in an editable table → confirms → generates manifests → feeds into the existing submit pipeline. This completes the "any customer data" story.
+
+### 2b. Generate TNO master-data manifests — **S** — owner: Kevin + Darryl
+Run the manifest generator against the TNO sample CSVs (`app/data/datasets/tno/csv/`), produce loadable `load_*.json` files at `app/data/osdu/rc--3.0.0/master-data/`, flip `dataset.json` enabled flag. Zero code changes to bulk_loader needed — just data vendoring. Blocked only by confirming the sample CSVs cover the upstream entities adequately.
+
+### 2c. AI-assisted schema mapping (v2 mapper) — **M** — owner: Kevin + Darryl review
+When `auto_map()` returns low confidence (many unmatched required fields), offer an "🤖 AI Suggest" flow that sends OSDU schema fields + CSV headers + sample rows to an LLM and returns proposed `FieldMapping` pairs the operator can review/edit. Requires Azure OpenAI (or configurable model endpoint). Returns the same `MappingResult` shape as the heuristic so the UI doesn't change. Scope: `ai_map()` function in `manifest_generator.py`, config for model endpoint, and the "AI Suggest" button in the Bulk Load page CSV flow.
 
 ---
 
@@ -37,22 +43,22 @@ Today the Ingestion page does `GET /legaltags/{name}` to confirm a tag exists be
 Paste-many or queue several manifests at once with one progress view. Waits for run history (#2) so the result list has somewhere to live.
 
 ### 5. Saved searches — **S** — owner: Judson
-Name + persist a `(kind, query)` pair locally so operators can re-run a frequent query without retyping. Pairs with run history's storage choice.
+Name + persist a `(kind, query, returnedFields, limit)` tuple locally so operators can re-run a frequent query without retyping. Pairs with run history's storage choice. Reference UX grounding: [OSDUBootcamp Module 4](https://github.com/EirikHaughom/OSDUBootcamp/tree/main/Labs/Module%204%20-%20Constructing%20Searches) — shows the building blocks operators compose (kind filter, Lucene query, field projection, limit). The save flow should capture all four.
 
 ### 6. Export search results — **S** — owner: Judson
-"Download CSV / JSON" on the Search page so operators can hand a result set to a notebook or share with a colleague. Honor the OSDU 10,000 offset+limit ceiling and warn when the result set is bigger than what's been pulled.
+"Download CSV / JSON" on the Search page so operators can hand a result set to a notebook or share with a colleague. For result sets > 1000, use the cursor search API (`/api/search/v2/query/cursor`) to paginate through all results before export. Honor the OSDU 10,000 totalCount ceiling and warn when the result set is bigger than what's been pulled. Reference: [OSDUBootcamp Module 4 §4.2](https://github.com/EirikHaughom/OSDUBootcamp/tree/main/Labs/Module%204%20-%20Constructing%20Searches) — cursor pagination pattern.
 
-### 7. CSV → manifest helper — **M** — owner: Judson + Kevin
-Upload a CSV, map columns to a target kind's fields, emit a manifest. Brady has mentioned this twice; deferred until file upload + manifest builder are real.
+### 7. CSV → manifest helper — **M** — owner: Judson + Kevin — ✅ DONE (2026-05-13)
+Shipped as `app/services/manifest_generator.py`: list_schema_kinds, load_schema, extract_schema_fields, auto_map (heuristic fuzzy matching), generate_manifests. 36 tests. Pure Python, no new deps. Page wiring is item #2 above.
 
 ### 8. Record edit / delete (Storage write paths) — **M** — owner: Kevin
 Today Search can *view* a full record (GET `/api/storage/v2/records/{id}`). Adding edit (`PUT`) and delete (`DELETE`) lets the Search page round-trip changes. Security-sensitive — needs explicit confirmation UI and a clear "this writes to OSDU" affordance.
 
 ### 9. Multi-kind filter on Search — **S** — owner: Judson
-Today the kind dropdown is single-select (or wildcard). OSDU Search accepts a `kind: []` array; surface that as a multiselect when an operator wants to scope across e.g. `Well` + `Wellbore`. Trivial backend change, modest UI change.
+Today the kind dropdown is single-select (or wildcard). OSDU Search accepts a `kind: []` array; surface that as a multiselect when an operator wants to scope across e.g. `Well` + `Wellbore`. Trivial backend change, modest UI change. Also add `aggregateBy: "kind"` support so operators can see record counts per kind before drilling in. Reference: [OSDUBootcamp §4.1.3 + §4.1.11](https://github.com/EirikHaughom/OSDUBootcamp/tree/main/Labs/Module%204%20-%20Constructing%20Searches).
 
 ### 10. Field-builder UI for Search queries — **M** — owner: Judson
-Helper to compose Lucene queries field-by-field (pick a field, pick an operator, pick a value) instead of typing raw Lucene. Out of v1 because Lucene works fine for now; this is operator-friendliness.
+Helper to compose Lucene queries field-by-field (pick a field, pick an operator, pick a value) instead of typing raw Lucene. Should support: `data.{field}:{value}` patterns, `.keyword` exact match, AND/OR combinators, `returnedFields` projection. Reference: [OSDUBootcamp §4.1.5–§4.1.10](https://github.com/EirikHaughom/OSDUBootcamp/tree/main/Labs/Module%204%20-%20Constructing%20Searches) — covers the full query grammar operators need.
 
 ### 11. App branding / favicon / About page — **XS** — owner: Scott or Judson
 Replace the default Streamlit branding, add an About page with build/version info and a link to the GitHub repo. Cosmetic; do it once the feature surface stabilizes.

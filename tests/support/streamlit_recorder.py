@@ -145,6 +145,34 @@ class StreamlitNavigationMock:
             self.flat_pages[0].run()
 
 
+class StreamlitProgressMock:
+    """Stand-in for the object returned by ``st.progress(...)``.
+
+    The page calls ``bar = st.progress(0.0, text=...); bar.progress(0.5)``
+    to update progress during submit loops. This mock records each
+    ``.progress()`` update so tests can assert on final progress values.
+    """
+
+    def __init__(
+        self,
+        recorder: StreamlitRecorder,
+        initial: float,
+        kwargs: dict[str, Any],
+    ) -> None:
+        self._recorder = recorder
+        self._recorder.calls.append(
+            StreamlitCall(name="progress", args=(initial,), kwargs=kwargs)
+        )
+        self.updates: list[tuple[float, dict[str, Any]]] = []
+
+    def progress(self, value: float, **kwargs: Any) -> None:
+        """Record a progress-bar update."""
+        self.updates.append((value, kwargs))
+        self._recorder.calls.append(
+            StreamlitCall(name="progress_update", args=(value,), kwargs=kwargs)
+        )
+
+
 class QueryParamsRecorder(dict[str, object]):
     """Record query-param clearing while behaving like Streamlit query params."""
 
@@ -199,6 +227,20 @@ class StreamlitRecorder(ModuleType):
             StreamlitContext(self, "column", (index,), {})
             for index in range(count)
         ]
+
+    def tabs(self, labels: list[str], **kwargs: Any) -> list[StreamlitContext]:
+        """Return context managers for ``tab_a, tab_b = st.tabs([...])``."""
+        self.calls.append(
+            StreamlitCall(name="tabs", args=(labels,), kwargs=kwargs)
+        )
+        return [
+            StreamlitContext(self, "tab", (label,), {})
+            for label in labels
+        ]
+
+    def progress(self, value: float = 0.0, **kwargs: Any) -> StreamlitProgressMock:
+        """Return a progress-bar mock with a chainable ``.progress()`` method."""
+        return StreamlitProgressMock(self, value, kwargs)
 
     def status(self, label: str, **kwargs: Any) -> StreamlitStatusContext:
         """Return a context manager that also exposes ``.update(...)``."""
@@ -308,6 +350,19 @@ class StreamlitRecorder(ModuleType):
             return False
         return self.button_responses.get(label, False)
 
+    def checkbox(
+        self, label: str, value: bool = False, **kwargs: Any
+    ) -> bool:
+        """Record a checkbox and return the configured widget value (bool)."""
+        self.calls.append(
+            StreamlitCall(
+                name="checkbox",
+                args=(label,),
+                kwargs={"value": value, **kwargs},
+            )
+        )
+        return bool(self.widget_values.get(label, value))
+
     def toggle(
         self, label: str, value: bool = False, **kwargs: Any
     ) -> bool:
@@ -338,6 +393,12 @@ class StreamlitRecorder(ModuleType):
         )
         if label in self.widget_values:
             return self.widget_values[label]
+        # Honour session-state key binding (mirrors real Streamlit behaviour).
+        key = kwargs.get("key")
+        if key and key in self.session_state:
+            val = self.session_state[key]
+            if val in (list(options) if options else []):
+                return val
         if not options:
             return None
         try:
